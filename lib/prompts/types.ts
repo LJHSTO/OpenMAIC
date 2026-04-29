@@ -26,7 +26,8 @@ export type PromptId =
   | 'agent-system-wb-assistant'
   | 'agent-system-wb-student'
   | 'director'
-  | 'pbl-design';
+  | 'pbl-design'
+  | 'modify-scene-plan';
 
 /**
  * Snippet identifier
