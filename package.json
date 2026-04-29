@@ -116,7 +116,6 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/tinycolor2": "^1.4.6",
-    "docx": "^9.6.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.2",
     "prettier": "3.8.1",

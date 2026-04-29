@@ -21,7 +21,6 @@ import type { Action, DiscussionAction, SpeechAction } from '@/lib/types/action'
 import { cn } from '@/lib/utils';
 // Playback state persistence removed — refresh always starts from the beginning
 import { ChatArea, type ChatAreaRef } from '@/components/chat/chat-area';
-import { SceneModifyPanel } from '@/components/modification/scene-modify-panel';
 import { agentsToParticipants, useAgentRegistry } from '@/lib/orchestration/registry/store';
 import type { AgentConfig } from '@/lib/orchestration/registry/types';
 import {
@@ -1023,12 +1022,6 @@ export function Stage({
                 : undefined
             }
           />
-          {!isPresenting && !isCourseComplete && (
-            <SceneModifyPanel
-              currentScene={currentScene}
-              rightOffset={chatAreaCollapsed ? 16 : chatAreaWidth + 16}
-            />
-          )}
         </div>
 
         {/* Roundtable Area */}

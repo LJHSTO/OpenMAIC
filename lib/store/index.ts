@@ -4,7 +4,6 @@ import { useSnapshotStore } from './snapshot';
 import { useKeyboardStore } from './keyboard';
 import { useStageStore } from './stage';
 import { useSettingsStore } from './settings';
-import { useModificationStore } from './modification';
 
 export {
   // New architecture
@@ -13,7 +12,6 @@ export {
   useSnapshotStore,
   useKeyboardStore,
   useSettingsStore,
-  useModificationStore,
 };
 
 // Scene Context API (for extensible scene types)
