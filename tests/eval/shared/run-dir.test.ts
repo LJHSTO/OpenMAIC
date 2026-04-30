@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, rmSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { basename, dirname, join } from 'path';
 import { createRunDir } from '@/eval/shared/run-dir';
 
 describe('createRunDir', () => {
@@ -23,14 +23,14 @@ describe('createRunDir', () => {
 
   it('sanitizes both : and / from the model string', () => {
     const runDir = createRunDir(tempRoot, 'google:gemini-2.5-flash/latest');
-    expect(runDir).toContain('google-gemini-2.5-flash-latest');
-    expect(runDir).not.toMatch(/[:/]gemini/);
+    const modelSegment = basename(dirname(runDir));
+    expect(modelSegment).toBe('google-gemini-2.5-flash-latest');
+    expect(modelSegment).not.toMatch(/[:/\\]/);
   });
 
   it('timestamp segment has no colons or dots', () => {
     const runDir = createRunDir(tempRoot, 'x');
-    const segments = runDir.split('/');
-    const timestamp = segments[segments.length - 1];
+    const timestamp = basename(runDir);
     expect(timestamp).not.toContain(':');
     expect(timestamp).not.toContain('.');
     expect(timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
