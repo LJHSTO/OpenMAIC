@@ -75,3 +75,41 @@ export function sanitizeStringsDeep<T>(value: T): T {
     Object.entries(value).map(([key, entry]) => [key, sanitizeStringsDeep(entry)]),
   ) as T;
 }
+
+export function extractJsonScriptContent(html: string, scriptId: string): string | null {
+  const escapedId = scriptId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = html.match(
+    new RegExp(
+      `<script(?=[^>]*\\btype=["']application/json["'])(?=[^>]*\\bid=["']${escapedId}["'])[^>]*>([\\s\\S]*?)<\\/script>`,
+      'i',
+    ),
+  );
+  return match?.[1]?.trim() ?? null;
+}
+
+export function replaceJsonScriptContent(
+  html: string | undefined,
+  scriptId: string,
+  value: unknown,
+): string | undefined {
+  if (!html) return html;
+  const escapedId = scriptId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const json = JSON.stringify(value, null, 2).replace(/</g, '\\u003c');
+  const scriptPattern = new RegExp(
+    `(<script(?=[^>]*\\btype=["']application/json["'])(?=[^>]*\\bid=["']${escapedId}["'])[^>]*>)([\\s\\S]*?)(<\\/script>)`,
+    'i',
+  );
+
+  if (scriptPattern.test(html)) {
+    return html.replace(
+      scriptPattern,
+      (_match, opening: string, _current: string, closing: string) => {
+        return `${opening}${json}${closing}`;
+      },
+    );
+  }
+
+  const script = `<script type="application/json" id="${scriptId}">${json}</script>`;
+  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${script}</body>`);
+  return `${html}${script}`;
+}

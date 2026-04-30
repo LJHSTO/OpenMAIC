@@ -1,5 +1,6 @@
 import type { Scene, SceneType, QuizQuestion } from '@/lib/types/stage';
 import type { PPTElement } from '@/lib/types/slides';
+import type { TeacherAction, WidgetConfig } from '@/lib/types/widgets';
 
 export type ModificationMode = 'spot' | 'scene' | 'conversation';
 
@@ -30,7 +31,7 @@ export interface EditPlan {
   clarificationQuestions?: ClarificationQuestion[];
 }
 
-export type EditOperation = SlideEditOperation | QuizEditOperation;
+export type EditOperation = SlideEditOperation | QuizEditOperation | InteractiveEditOperation;
 
 export type SlideEditOperation =
   | {
@@ -79,6 +80,26 @@ export type QuizEditOperation =
       id?: string;
       type: 'quiz.delete_question';
       questionId: string;
+      reason: string;
+    };
+
+export type InteractiveEditOperation =
+  | {
+      id?: string;
+      type: 'interactive.update_widget_config';
+      patch: Partial<WidgetConfig> & Record<string, unknown>;
+      reason: string;
+    }
+  | {
+      id?: string;
+      type: 'interactive.replace_widget_config';
+      widgetConfig: WidgetConfig;
+      reason: string;
+    }
+  | {
+      id?: string;
+      type: 'interactive.update_teacher_actions';
+      teacherActions: TeacherAction[];
       reason: string;
     };
 

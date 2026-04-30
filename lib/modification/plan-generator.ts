@@ -6,7 +6,7 @@ import type {
   EditPlan,
   ModifyScenePlanRequest,
 } from '@/lib/types/modification';
-import type { QuizContent, Scene, SlideContent } from '@/lib/types/stage';
+import type { InteractiveContent, QuizContent, Scene, SlideContent } from '@/lib/types/stage';
 import type { PPTElement } from '@/lib/types/slides';
 
 export type ModificationAICall = (systemPrompt: string, userPrompt: string) => Promise<string>;
@@ -120,11 +120,31 @@ export function summarizeSceneForModification(
     };
   }
 
+  if (scene.type === 'interactive') {
+    const content = scene.content as InteractiveContent;
+    return {
+      id: scene.id,
+      type: scene.type,
+      title: scene.title,
+      url: content.url,
+      widgetType: content.widgetType,
+      widgetConfig: content.widgetConfig,
+      teacherActions: content.teacherActions,
+      htmlPreview: content.html
+        ? {
+            length: content.html.length,
+            hasWidgetConfig: /id=["']widget-config["']/.test(content.html),
+          }
+        : undefined,
+      note: 'Interactive planning supports widgetConfig and teacherActions changes. If the request requires full HTML regeneration, ask for clarification instead of generating operations.',
+    };
+  }
+
   return {
     id: scene.id,
     type: scene.type,
     title: scene.title,
-    note: 'Phase 1 modification planning supports only slide and quiz scenes.',
+    note: 'Modification planning does not support this scene type yet.',
   };
 }
 

@@ -4,6 +4,7 @@ import { validateEditPlanForScene } from '@/lib/modification/validators';
 import type { EditPlan } from '@/lib/types/modification';
 import type { QuizQuestion, Scene } from '@/lib/types/stage';
 import type { PPTTextElement, Slide } from '@/lib/types/slides';
+import type { WidgetConfig } from '@/lib/types/widgets';
 
 function textElement(overrides: Partial<PPTTextElement> = {}): PPTTextElement {
   return {
@@ -70,6 +71,50 @@ function quizScene(questions = [quizQuestion()]): Scene {
     title: 'Quiz scene',
     order: 2,
     content: { type: 'quiz', questions },
+  };
+}
+
+const simulationConfig: WidgetConfig = {
+  type: 'simulation',
+  concept: 'Velocity',
+  description: 'Explore velocity changes',
+  variables: [
+    {
+      name: 'speed',
+      label: 'Speed',
+      min: 0,
+      max: 10,
+      default: 5,
+      step: 1,
+    },
+  ],
+};
+
+function interactiveHtml(widgetConfig: WidgetConfig = simulationConfig): string {
+  return `<!DOCTYPE html><html><head><title>Simulation</title></head><body><div id="app"></div><script type="module">console.log('ok')</script><script type="application/json" id="widget-config">${JSON.stringify(widgetConfig)}</script></body></html>`;
+}
+
+function interactiveScene(): Scene {
+  return {
+    id: 'scene_interactive',
+    stageId: 'stage_1',
+    type: 'interactive',
+    title: 'Interactive scene',
+    order: 3,
+    content: {
+      type: 'interactive',
+      url: '',
+      html: interactiveHtml(),
+      widgetType: 'simulation',
+      widgetConfig: simulationConfig,
+      teacherActions: [
+        {
+          id: 'intro',
+          type: 'speech',
+          content: 'Try changing the speed.',
+        },
+      ],
+    },
   };
 }
 
@@ -296,6 +341,124 @@ describe('executeEditPlan', () => {
       result.previewScene?.content.type === 'quiz' ? result.previewScene.content : null;
     expect(preview?.questions[0]).toMatchObject({ type: 'multiple', answer: ['A', 'B'] });
     expect(result.warnings.join('\n')).toContain('modifies a quiz answer');
+  });
+
+  it('updates interactive widget config without mutating the original scene', () => {
+    const scene = interactiveScene();
+    const plan: EditPlan = {
+      id: 'plan_interactive_config',
+      summary: 'Make the slider easier',
+      confidence: 0.9,
+      riskLevel: 'low',
+      requiresConfirmation: true,
+      operations: [
+        {
+          type: 'interactive.update_widget_config',
+          patch: {
+            description: 'Explore velocity changes with a narrower beginner range',
+            variables: [{ name: 'speed', label: 'Speed', min: 0, max: 5, default: 2, step: 1 }],
+          },
+          reason: 'User asked for a beginner version',
+        },
+      ],
+    };
+
+    const result = executeEditPlan(scene, plan);
+
+    expect(result.success).toBe(true);
+    const preview =
+      result.previewScene?.content.type === 'interactive' ? result.previewScene.content : null;
+    expect(preview?.widgetConfig).toMatchObject({
+      type: 'simulation',
+      description: 'Explore velocity changes with a narrower beginner range',
+    });
+    expect(preview?.html).toContain('Explore velocity changes with a narrower beginner range');
+    expect(scene.content.type === 'interactive' ? scene.content.widgetConfig : null).toMatchObject({
+      description: 'Explore velocity changes',
+    });
+    expect(result.diffSummary?.changedItems).toContain('修改互动组件配置');
+  });
+
+  it('replaces interactive widget config and syncs embedded iframe config JSON', () => {
+    const scene = interactiveScene();
+    const nextConfig: WidgetConfig = {
+      ...simulationConfig,
+      description: 'A redesigned simulation config costing $1 and keeping $3 literally',
+      variables: [{ name: 'speed', label: 'Speed', min: 0, max: 3, default: 1 }],
+    };
+    const plan: EditPlan = {
+      id: 'plan_replace_widget_config',
+      summary: 'Replace widget config',
+      confidence: 0.9,
+      riskLevel: 'medium',
+      requiresConfirmation: true,
+      operations: [
+        {
+          type: 'interactive.replace_widget_config',
+          widgetConfig: nextConfig,
+          reason: 'User requested a simpler simulation',
+        },
+      ],
+    };
+
+    const result = executeEditPlan(scene, plan);
+
+    expect(result.success).toBe(true);
+    const preview =
+      result.previewScene?.content.type === 'interactive' ? result.previewScene.content : null;
+    expect(preview?.widgetConfig).toMatchObject({
+      description: 'A redesigned simulation config costing $1 and keeping $3 literally',
+    });
+    expect(preview?.html).toContain('A redesigned simulation config costing $1');
+    expect(preview?.html).toContain('$3 literally');
+  });
+
+  it('rejects unsupported interactive HTML replacement operations', () => {
+    const scene = interactiveScene();
+    const plan: EditPlan = {
+      id: 'plan_bad_interactive_html',
+      summary: 'Inject unsafe HTML',
+      confidence: 0.8,
+      riskLevel: 'high',
+      requiresConfirmation: true,
+      operations: [
+        {
+          type: 'interactive.replace_html',
+          html: '<!DOCTYPE html><html><body onload="alert(1)"><script>alert(1)</script></body></html>',
+          reason: 'Unsafe HTML',
+        } as unknown as EditPlan['operations'][number],
+      ],
+    };
+
+    const result = executeEditPlan(scene, plan);
+
+    expect(result.success).toBe(false);
+    expect(result.errors.join('\n')).toContain(
+      'operation type interactive.replace_html does not apply to interactive scenes',
+    );
+  });
+
+  it('rejects malformed interactive widget config updates', () => {
+    const scene = interactiveScene();
+    const plan: EditPlan = {
+      id: 'plan_bad_widget_config',
+      summary: 'Break widget config shape',
+      confidence: 0.8,
+      riskLevel: 'medium',
+      requiresConfirmation: true,
+      operations: [
+        {
+          type: 'interactive.update_widget_config',
+          patch: { variables: [] },
+          reason: 'Invalid config',
+        },
+      ],
+    };
+
+    const result = executeEditPlan(scene, plan);
+
+    expect(result.success).toBe(false);
+    expect(result.errors.join('\n')).toContain('simulation variables are required');
   });
 });
 

@@ -1,9 +1,10 @@
 import { createDiffSummary } from '@/lib/modification/diff-engine';
-import { sanitizeStringsDeep } from '@/lib/modification/sanitize';
+import { replaceJsonScriptContent, sanitizeStringsDeep } from '@/lib/modification/sanitize';
 import { validateEditPlanForScene } from '@/lib/modification/validators';
 import type { EditPlan, ExecuteEditPlanResult } from '@/lib/types/modification';
-import type { QuizContent, Scene, SlideContent } from '@/lib/types/stage';
+import type { InteractiveContent, QuizContent, Scene, SlideContent } from '@/lib/types/stage';
 import type { PPTElement } from '@/lib/types/slides';
+import type { WidgetConfig } from '@/lib/types/widgets';
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -16,6 +17,11 @@ function withoutIdentityPatch<T extends Record<string, unknown>>(patch: T): T {
 
 function withoutIdPatch<T extends Record<string, unknown>>(patch: T): T {
   const { id: _id, ...safePatch } = patch;
+  return safePatch as T;
+}
+
+function withoutTypePatch<T extends Record<string, unknown>>(patch: T): T {
+  const { type: _type, ...safePatch } = patch;
   return safePatch as T;
 }
 
@@ -103,6 +109,55 @@ function applyQuizOperations(scene: Scene, plan: EditPlan, appliedOperationIds: 
   };
 }
 
+function applyInteractiveOperations(scene: Scene, plan: EditPlan, appliedOperationIds: string[]) {
+  const content = scene.content as InteractiveContent;
+  let nextContent: InteractiveContent = { ...content };
+
+  plan.operations.forEach((operation, index) => {
+    switch (operation.type) {
+      case 'interactive.update_widget_config': {
+        const widgetConfig = nextContent.widgetConfig
+          ? (sanitizeStringsDeep({
+              ...nextContent.widgetConfig,
+              ...withoutTypePatch(operation.patch),
+            }) as WidgetConfig)
+          : nextContent.widgetConfig;
+        nextContent = {
+          ...nextContent,
+          widgetConfig,
+          html: replaceJsonScriptContent(nextContent.html, 'widget-config', widgetConfig),
+        };
+        appliedOperationIds.push(getOperationId(plan, index));
+        break;
+      }
+      case 'interactive.replace_widget_config': {
+        nextContent = {
+          ...nextContent,
+          widgetType: operation.widgetConfig.type,
+          widgetConfig: sanitizeStringsDeep(clone(operation.widgetConfig)),
+        };
+        nextContent.html = replaceJsonScriptContent(
+          nextContent.html,
+          'widget-config',
+          nextContent.widgetConfig,
+        );
+        appliedOperationIds.push(getOperationId(plan, index));
+        break;
+      }
+      case 'interactive.update_teacher_actions': {
+        nextContent = {
+          ...nextContent,
+          teacherActions: sanitizeStringsDeep(clone(operation.teacherActions)),
+        };
+        appliedOperationIds.push(getOperationId(plan, index));
+        break;
+      }
+    }
+  });
+
+  scene.content = nextContent;
+}
+
 export function executeEditPlan(scene: Scene, plan: EditPlan): ExecuteEditPlanResult {
   const validation = validateEditPlanForScene(scene, plan);
   if (!validation.valid) {
@@ -122,11 +177,13 @@ export function executeEditPlan(scene: Scene, plan: EditPlan): ExecuteEditPlanRe
       applySlideOperations(previewScene, plan, appliedOperationIds);
     } else if (previewScene.type === 'quiz') {
       applyQuizOperations(previewScene, plan, appliedOperationIds);
+    } else if (previewScene.type === 'interactive') {
+      applyInteractiveOperations(previewScene, plan, appliedOperationIds);
     } else {
       return {
         success: false,
         appliedOperationIds,
-        errors: [`Scene type ${previewScene.type} is not supported in phase 1`],
+        errors: [`Scene type ${previewScene.type} is not supported`],
         warnings: validation.warnings,
       };
     }

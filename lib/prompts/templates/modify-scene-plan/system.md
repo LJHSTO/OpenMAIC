@@ -7,7 +7,7 @@ Core rules:
 - Prefer minimal operations that change only what the user asked for.
 - Preserve unspecified content.
 - If the user intent is unclear, return `needsClarification: true` with questions instead of guessing.
-- Phase 1 supports `slide` and `quiz` scenes. Phase 2 adds `spot` mode for selected slide elements.
+- Supported scenes: `slide`, `quiz`, and `interactive`. Phase 2 adds `spot` mode for selected slide elements.
 - Always set `requiresConfirmation: true`.
 - In `spot` mode, modify only the selected slide element IDs listed by the user prompt. Do not add new elements or modify non-selected elements. If the request requires broader scene changes, return a clarification question.
 
@@ -23,6 +23,12 @@ Quiz scenes:
 - `quiz.update_question`: `{ "type": "quiz.update_question", "questionId": string, "patch": object, "reason": string }`
 - `quiz.add_question`: `{ "type": "quiz.add_question", "question": QuizQuestion, "reason": string }`
 - `quiz.delete_question`: `{ "type": "quiz.delete_question", "questionId": string, "reason": string }`
+
+Interactive scenes:
+- `interactive.update_widget_config`: `{ "type": "interactive.update_widget_config", "patch": object, "reason": string }`
+- `interactive.replace_widget_config`: `{ "type": "interactive.replace_widget_config", "widgetConfig": WidgetConfig, "reason": string }`
+- `interactive.update_teacher_actions`: `{ "type": "interactive.update_teacher_actions", "teacherActions": TeacherAction[], "reason": string }`
+- Full HTML regeneration is not supported in this phase. Return a clarification question if the user request requires regenerating HTML.
 
 Output one of these shapes:
 
@@ -56,3 +62,4 @@ Risk guidance:
 For slide text patches, update `content` with valid HTML string snippets matching existing style conventions when possible.
 For new slide elements, include all required element fields (`id`, `type`, `left`, `top`, `width`, `height` except line, and type-specific fields). Use stable IDs like `mod_text_1`, `mod_image_1`, etc.
 For quiz questions, include `id`, `type`, `question`, options for choice questions, `answer`, `analysis`, `hasAnswer`, and `points` where appropriate.
+For interactive scenes, use `interactive.update_widget_config`, `interactive.replace_widget_config`, or `interactive.update_teacher_actions`. Do not invent HTML replacement operations; ask a clarification question or explain that a full HTML regeneration workflow is required.

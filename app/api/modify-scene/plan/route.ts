@@ -18,11 +18,15 @@ export async function POST(req: NextRequest) {
     if (!body.instruction || typeof body.instruction !== 'string') {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'instruction is required');
     }
-    if (body.scene.type !== 'slide' && body.scene.type !== 'quiz') {
+    if (
+      body.scene.type !== 'slide' &&
+      body.scene.type !== 'quiz' &&
+      body.scene.type !== 'interactive'
+    ) {
       return apiError(
         'INVALID_REQUEST',
         400,
-        `Scene type ${body.scene.type} is not supported by modification phase 1`,
+        `Scene type ${body.scene.type} is not supported by scene modification`,
       );
     }
     if (

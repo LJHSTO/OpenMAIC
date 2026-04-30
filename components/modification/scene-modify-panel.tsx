@@ -103,7 +103,10 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
   const [clarification, setClarification] = useState<string[]>([]);
   const [mode, setMode] = useState<ModificationMode>('scene');
 
-  const supported = currentScene?.type === 'slide' || currentScene?.type === 'quiz';
+  const supported =
+    currentScene?.type === 'slide' ||
+    currentScene?.type === 'quiz' ||
+    currentScene?.type === 'interactive';
   const selectedSlideElementIds = useMemo(() => {
     if (currentScene?.type !== 'slide' || currentScene.content.type !== 'slide') return [];
     const elementIds = new Set(currentScene.content.canvas.elements.map((element) => element.id));
@@ -376,6 +379,13 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
                 {quickInstruction.replace('把选中元素', '').replace('把选中的文字', '文字')}
               </Button>
             ))}
+          </div>
+        )}
+
+        {currentScene.type === 'interactive' && (
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
+            Interactive edits update widget config and teacher action guidance. Full HTML
+            regeneration is not enabled in this phase.
           </div>
         )}
 

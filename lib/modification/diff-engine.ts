@@ -1,5 +1,11 @@
 import type { EditPlan, DiffSummary } from '@/lib/types/modification';
-import type { QuizContent, QuizQuestion, Scene, SlideContent } from '@/lib/types/stage';
+import type {
+  InteractiveContent,
+  QuizContent,
+  QuizQuestion,
+  Scene,
+  SlideContent,
+} from '@/lib/types/stage';
 import type { PPTElement } from '@/lib/types/slides';
 
 function toComparable(value: unknown): string {
@@ -92,6 +98,38 @@ export function createDiffSummary(
       updatedCount: diff.updated.length,
       deletedCount: diff.deleted.length,
       unchangedHint: `其余 ${diff.unchanged.length} 道题未改动`,
+      riskWarnings,
+    };
+  }
+
+  if (before.type === 'interactive' && after.type === 'interactive') {
+    const beforeContent = before.content as InteractiveContent;
+    const afterContent = after.content as InteractiveContent;
+    const changedItems: string[] = [];
+
+    const widgetConfigChanged =
+      toComparable(beforeContent.widgetConfig) !== toComparable(afterContent.widgetConfig);
+    if (widgetConfigChanged) {
+      changedItems.push('修改互动组件配置');
+    }
+    if (toComparable(beforeContent.teacherActions) !== toComparable(afterContent.teacherActions)) {
+      changedItems.push('修改教师互动引导动作');
+    }
+    if ((beforeContent.html ?? '') !== (afterContent.html ?? '')) {
+      changedItems.push(widgetConfigChanged ? '同步互动组件嵌入配置' : '修改互动 iframe HTML');
+    }
+    if (beforeContent.url !== afterContent.url) {
+      changedItems.push('修改互动页面 URL');
+    }
+
+    return {
+      summary: plan.summary,
+      changedItems,
+      changedItemIds: [],
+      addedCount: 0,
+      updatedCount: changedItems.length,
+      deletedCount: 0,
+      unchangedHint: changedItems.length > 0 ? '其余互动场景字段未改动' : '互动场景未检测到变化',
       riskWarnings,
     };
   }

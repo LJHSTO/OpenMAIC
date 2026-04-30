@@ -1,7 +1,14 @@
 import { hasUnsafeHtml } from '@/lib/modification/sanitize';
 import type { EditOperation, EditPlan, PlanValidationResult } from '@/lib/types/modification';
-import type { QuizContent, QuizQuestion, Scene, SlideContent } from '@/lib/types/stage';
+import type {
+  InteractiveContent,
+  QuizContent,
+  QuizQuestion,
+  Scene,
+  SlideContent,
+} from '@/lib/types/stage';
 import type { PPTElement } from '@/lib/types/slides';
+import type { TeacherAction, WidgetConfig } from '@/lib/types/widgets';
 
 const SLIDE_OPERATION_TYPES = new Set([
   'slide.update_element',
@@ -14,6 +21,12 @@ const QUIZ_OPERATION_TYPES = new Set([
   'quiz.update_question',
   'quiz.add_question',
   'quiz.delete_question',
+]);
+
+const INTERACTIVE_OPERATION_TYPES = new Set([
+  'interactive.update_widget_config',
+  'interactive.replace_widget_config',
+  'interactive.update_teacher_actions',
 ]);
 
 const ELEMENT_TYPES = new Set([
@@ -30,6 +43,8 @@ const ELEMENT_TYPES = new Set([
 ]);
 
 const QUESTION_TYPES = new Set(['single', 'multiple', 'short_answer']);
+const WIDGET_TYPES = new Set(['simulation', 'diagram', 'code', 'game', 'visualization3d']);
+const TEACHER_ACTION_TYPES = new Set(['speech', 'highlight', 'annotation', 'reveal', 'setState']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -117,6 +132,84 @@ function validateQuizPatch(patch: Record<string, unknown>, errors: string[], con
   if ('points' in patch && (!isFiniteNumber(patch.points) || patch.points <= 0)) {
     errors.push(`${context}: points must be a positive number`);
   }
+}
+
+function validateWidgetConfig(
+  widgetConfig: WidgetConfig | undefined,
+  errors: string[],
+  context: string,
+) {
+  if (!isRecord(widgetConfig)) {
+    errors.push(`${context}: widgetConfig must be an object`);
+    return;
+  }
+  if (!WIDGET_TYPES.has(widgetConfig.type)) errors.push(`${context}: unsupported widget type`);
+  validateSafeStrings(widgetConfig, errors, context, 'widgetConfig');
+
+  switch (widgetConfig.type) {
+    case 'simulation': {
+      if (typeof widgetConfig.concept !== 'string') errors.push(`${context}: concept is required`);
+      if (typeof widgetConfig.description !== 'string') {
+        errors.push(`${context}: description is required`);
+      }
+      if (!Array.isArray(widgetConfig.variables) || widgetConfig.variables.length === 0) {
+        errors.push(`${context}: simulation variables are required`);
+      }
+      break;
+    }
+    case 'diagram': {
+      if (!Array.isArray(widgetConfig.nodes) || widgetConfig.nodes.length === 0) {
+        errors.push(`${context}: diagram nodes are required`);
+      }
+      if (!Array.isArray(widgetConfig.edges)) errors.push(`${context}: diagram edges are required`);
+      break;
+    }
+    case 'code': {
+      if (typeof widgetConfig.starterCode !== 'string') {
+        errors.push(`${context}: starterCode is required`);
+      }
+      if (!Array.isArray(widgetConfig.testCases)) errors.push(`${context}: testCases are required`);
+      if (!Array.isArray(widgetConfig.hints)) errors.push(`${context}: hints are required`);
+      if (typeof widgetConfig.solution !== 'string')
+        errors.push(`${context}: solution is required`);
+      break;
+    }
+    case 'game': {
+      if (!isRecord(widgetConfig.scoring)) errors.push(`${context}: scoring is required`);
+      break;
+    }
+    case 'visualization3d': {
+      if (!Array.isArray(widgetConfig.objects) || widgetConfig.objects.length === 0) {
+        errors.push(`${context}: visualization objects are required`);
+      }
+      break;
+    }
+  }
+}
+
+function validateTeacherActions(
+  teacherActions: TeacherAction[],
+  errors: string[],
+  context: string,
+) {
+  if (!Array.isArray(teacherActions)) {
+    errors.push(`${context}: teacherActions must be an array`);
+    return;
+  }
+  teacherActions.forEach((action, actionIndex) => {
+    const actionContext = `${context}.teacherActions[${actionIndex}]`;
+    if (!isRecord(action)) {
+      errors.push(`${actionContext}: action must be an object`);
+      return;
+    }
+    if (!action.id || typeof action.id !== 'string') {
+      errors.push(`${actionContext}: id is required`);
+    }
+    if (!TEACHER_ACTION_TYPES.has(action.type)) {
+      errors.push(`${actionContext}: unsupported action type`);
+    }
+    validateSafeStrings(action, errors, actionContext, 'action');
+  });
 }
 
 function validatePlanShape(plan: EditPlan, errors: string[], warnings: string[]) {
@@ -324,6 +417,50 @@ function validateQuizOperation(
   }
 }
 
+function validateInteractiveOperation(
+  scene: Scene,
+  operation: EditOperation,
+  index: number,
+  errors: string[],
+) {
+  const context = `operation[${index}]`;
+  const content = scene.content as InteractiveContent;
+
+  if (!INTERACTIVE_OPERATION_TYPES.has(operation.type)) {
+    errors.push(
+      `${context}: operation type ${operation.type} does not apply to interactive scenes`,
+    );
+    return;
+  }
+
+  switch (operation.type) {
+    case 'interactive.update_widget_config': {
+      if (!content.widgetConfig) errors.push(`${context}: scene has no widgetConfig to update`);
+      if (!isRecord(operation.patch)) errors.push(`${context}: patch must be an object`);
+      else {
+        if ('type' in operation.patch) errors.push(`${context}: patch cannot change widget type`);
+        validateSafeStrings(operation.patch, errors, context, 'patch');
+        if (content.widgetConfig) {
+          validateWidgetConfig(
+            { ...content.widgetConfig, ...operation.patch } as WidgetConfig,
+            errors,
+            context,
+          );
+        }
+      }
+      break;
+    }
+    case 'interactive.replace_widget_config': {
+      validateWidgetConfig(operation.widgetConfig, errors, context);
+      break;
+    }
+    case 'interactive.update_teacher_actions': {
+      validateTeacherActions(operation.teacherActions, errors, context);
+      break;
+    }
+  }
+}
+
 export function validateEditPlanForScene(scene: Scene, plan: EditPlan): PlanValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -360,7 +497,11 @@ export function validateEditPlanForScene(scene: Scene, plan: EditPlan): PlanVali
       validateQuizOperation(scene, operation, index, errors, warnings);
       return;
     }
-    errors.push(`operation[${index}]: scene type ${scene.type} is not supported in phase 1`);
+    if (scene.type === 'interactive') {
+      validateInteractiveOperation(scene, operation, index, errors);
+      return;
+    }
+    errors.push(`operation[${index}]: scene type ${scene.type} is not supported`);
   });
 
   return { valid: errors.length === 0, errors, warnings };
