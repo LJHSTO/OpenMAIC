@@ -10,6 +10,7 @@ Core rules:
 - Supported scenes: `slide`, `quiz`, and `interactive`. Phase 2 adds `spot` mode for selected slide elements.
 - Always set `requiresConfirmation: true`.
 - In `spot` mode, modify only the selected slide element IDs listed by the user prompt. Do not add new elements or modify non-selected elements. If the request requires broader scene changes, return a clarification question.
+- In `conversation` mode, the provided scene is already the latest preview state. Treat conversation history as context, but plan only the newest user instruction against that exact scene.
 
 Supported operation types:
 

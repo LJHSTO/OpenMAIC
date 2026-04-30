@@ -4,6 +4,7 @@ import { createSelectors } from '@/lib/utils/create-selectors';
 import type {
   DiffSummary,
   EditPlan,
+  ModificationConversationTurn,
   ModificationHistoryEntry,
   ModificationMode,
   ModificationSession,
@@ -16,6 +17,8 @@ interface StartSessionParams {
   scene: Scene;
   instruction: string;
   mode?: ModificationMode;
+  commitBaseScene?: Scene;
+  conversationHistory?: ModificationConversationTurn[];
 }
 
 interface ModificationState {
@@ -46,6 +49,29 @@ function now() {
   return Date.now();
 }
 
+function cloneConversationHistory(
+  history: ModificationConversationTurn[] | undefined,
+): ModificationConversationTurn[] | undefined {
+  return history?.map((turn) => ({ ...turn }));
+}
+
+function appendConversationTurn(
+  history: ModificationConversationTurn[] | undefined,
+  turn: ModificationConversationTurn,
+): ModificationConversationTurn[] {
+  const previous = history ?? [];
+  const last = previous.at(-1);
+  if (last?.role === turn.role && last.content === turn.content) return previous;
+  return [...previous, turn].slice(-20);
+}
+
+function summarizePreviewTurn(session: ModificationSession, diffSummary: DiffSummary): string {
+  const changedItems = diffSummary.changedItems.length
+    ? diffSummary.changedItems.map((item) => `- ${item}`).join('\n')
+    : '- No detected changes';
+  return `Plan: ${session.editPlan?.summary ?? 'No plan summary'}\nPreview diff:\n${changedItems}`;
+}
+
 function appendHistory(
   history: ModificationHistoryEntry[],
   session: ModificationSession,
@@ -59,6 +85,7 @@ function appendHistory(
     instruction: session.userInstruction,
     planSummary: session.editPlan?.summary ?? '',
     diffSummary: session.diffSummary,
+    conversationHistory: cloneConversationHistory(session.conversationHistory),
     accepted,
     createdAt: now(),
   };
@@ -76,7 +103,14 @@ const useModificationStoreBase = create<ModificationState>()((set, get) => ({
   closePanel: () => set({ isPanelOpen: false }),
   setPreviewMode: (previewMode) => set({ previewMode }),
 
-  startSession: ({ stageId, scene, instruction, mode = 'scene' }) => {
+  startSession: ({
+    stageId,
+    scene,
+    instruction,
+    mode = 'scene',
+    commitBaseScene,
+    conversationHistory,
+  }) => {
     const timestamp = now();
     const sessionId = nanoid();
     set({
@@ -90,6 +124,8 @@ const useModificationStoreBase = create<ModificationState>()((set, get) => ({
         status: 'planning',
         userInstruction: instruction,
         originalScene: cloneScene(scene),
+        commitBaseScene: cloneScene(commitBaseScene ?? scene),
+        conversationHistory: cloneConversationHistory(conversationHistory),
         createdAt: timestamp,
         updatedAt: timestamp,
       },
@@ -119,12 +155,21 @@ const useModificationStoreBase = create<ModificationState>()((set, get) => ({
   setPreview: (previewScene, diffSummary, previewBaseScene) => {
     const session = get().activeSession;
     if (!session) return;
+    const conversationHistory =
+      session.mode === 'conversation'
+        ? appendConversationTurn(session.conversationHistory, {
+            role: 'assistant',
+            content: summarizePreviewTurn(session, diffSummary),
+            createdAt: now(),
+          })
+        : session.conversationHistory;
     set({
       activeSession: {
         ...session,
         previewBaseScene: previewBaseScene ? cloneScene(previewBaseScene) : session.originalScene,
         previewScene: cloneScene(previewScene),
         diffSummary,
+        conversationHistory,
         status: 'previewing',
         updatedAt: now(),
       },

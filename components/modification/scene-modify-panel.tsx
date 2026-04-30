@@ -11,7 +11,9 @@ import { cn } from '@/lib/utils';
 import type {
   DiffSummary,
   EditPlan,
+  ModificationConversationTurn,
   ModificationMode,
+  ModificationSession,
   ModifyScenePlanRequest,
   ModifyScenePreviewRequest,
 } from '@/lib/types/modification';
@@ -77,6 +79,32 @@ function sceneContentFingerprint(scene: Scene): string {
   return JSON.stringify(scene.content);
 }
 
+function summarizeSessionForConversation(session: ModificationSession): string {
+  const changedItems = session.diffSummary?.changedItems.length
+    ? session.diffSummary.changedItems.map((item) => `- ${item}`).join('\n')
+    : '- Preview was not generated yet';
+  return `Plan: ${session.editPlan?.summary ?? 'No plan summary'}\nPreview diff:\n${changedItems}`;
+}
+
+function buildConversationHistory(session: ModificationSession): ModificationConversationTurn[] {
+  if (session.conversationHistory?.length) return session.conversationHistory;
+  const turns: ModificationConversationTurn[] = [
+    {
+      role: 'user',
+      content: session.userInstruction,
+      createdAt: session.createdAt,
+    },
+  ];
+  if (session.editPlan || session.diffSummary) {
+    turns.push({
+      role: 'assistant',
+      content: summarizeSessionForConversation(session),
+      createdAt: session.updatedAt,
+    });
+  }
+  return turns;
+}
+
 export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModifyPanelProps) {
   const activeSession = useModificationStore.use.activeSession();
   const isPanelOpen = useModificationStore.use.isPanelOpen();
@@ -101,6 +129,7 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [clarification, setClarification] = useState<string[]>([]);
+  const [followUpInstruction, setFollowUpInstruction] = useState('');
   const [mode, setMode] = useState<ModificationMode>('scene');
 
   const supported =
@@ -158,6 +187,7 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
         scene: currentScene,
         instruction: instruction.trim(),
         mode,
+        commitBaseScene: currentScene,
       });
       const body: ModifyScenePlanRequest = {
         stageId: stage.id,
@@ -188,6 +218,7 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
         throw new Error(data.validation.errors.join('\n') || 'Generated edit plan is invalid');
       }
       setPlan(data.plan);
+      setFollowUpInstruction('');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setLocalError(message);
@@ -200,7 +231,11 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
   const requestPreview = async () => {
     if (!activeSession?.editPlan) return;
     const previewBaseScene =
-      currentScene?.id === activeSession.sceneId ? currentScene : activeSession.originalScene;
+      activeSession.mode === 'conversation'
+        ? activeSession.originalScene
+        : currentScene?.id === activeSession.sceneId
+          ? currentScene
+          : activeSession.originalScene;
     setBusy(true);
     setLocalError(null);
     setStatus('executing_preview');
@@ -239,24 +274,97 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
     }
   };
 
+  const requestConversationRefine = async () => {
+    const followUp = followUpInstruction.trim();
+    const previewScene = activeSession?.previewScene;
+    if (!activeSession || !previewScene || !currentScene || !stage || !followUp) return;
+
+    const previousSession = activeSession;
+    const conversationHistory = buildConversationHistory(previousSession);
+    const nextConversationHistory: ModificationConversationTurn[] = [
+      ...conversationHistory,
+      { role: 'user', content: followUp, createdAt: Date.now() },
+    ];
+
+    setBusy(true);
+    setLocalError(null);
+    setClarification([]);
+    setStatus('planning');
+
+    try {
+      const body: ModifyScenePlanRequest = {
+        stageId: stage.id,
+        sceneId: previousSession.sceneId,
+        scene: previewScene,
+        instruction: followUp,
+        mode: 'conversation',
+        conversationHistory,
+        languageDirective: stage.languageDirective,
+      };
+
+      const response = await fetch('/api/modify-scene/plan', {
+        method: 'POST',
+        headers: getApiHeaders(),
+        body: JSON.stringify(withThinkingConfig(body as unknown as Record<string, unknown>)),
+      });
+      const data = (await response.json()) as PlanResponse;
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      if (data.needsClarification) {
+        setClarification((data.questions ?? []).map((q) => q.question));
+        setStatus('previewing');
+        return;
+      }
+      if (!data.plan) throw new Error('No edit plan returned');
+      if (data.validation && !data.validation.valid) {
+        throw new Error(data.validation.errors.join('\n') || 'Generated edit plan is invalid');
+      }
+
+      startSession({
+        stageId: stage.id,
+        scene: previewScene,
+        instruction: followUp,
+        mode: 'conversation',
+        commitBaseScene:
+          previousSession.commitBaseScene ?? previousSession.previewBaseScene ?? currentScene,
+        conversationHistory: nextConversationHistory,
+      });
+      setPlan(data.plan);
+      setFollowUpInstruction('');
+      clearHighlight();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLocalError(message);
+      setError(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const acceptPreview = async () => {
     if (!activeSession?.previewScene || !currentScene) return;
     setBusy(true);
     setLocalError(null);
     try {
+      const commitBaseScene = activeSession.commitBaseScene ?? activeSession.previewBaseScene;
       if (
-        activeSession.previewBaseScene &&
-        sceneContentFingerprint(currentScene) !==
-          sceneContentFingerprint(activeSession.previewBaseScene)
+        commitBaseScene &&
+        sceneContentFingerprint(currentScene) !== sceneContentFingerprint(commitBaseScene)
       ) {
         throw new Error(
           'The scene changed after preview was generated. Reject and regenerate preview.',
         );
       }
       await addSnapshot();
-      updateScene(activeSession.sceneId, activeSession.previewScene);
+      // Commit only generated content so concurrent metadata edits are preserved.
+      updateScene(activeSession.sceneId, {
+        content: activeSession.previewScene.content,
+        updatedAt: activeSession.previewScene.updatedAt,
+      });
       clearHighlight();
       markAccepted();
+      setFollowUpInstruction('');
       closePanel();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -272,6 +380,7 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
     clearHighlight();
     setClarification([]);
     setLocalError(null);
+    setFollowUpInstruction('');
   };
 
   const quickInstructions = [
@@ -435,6 +544,32 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
                 {activeSession.diffSummary.unchangedHint}
               </div>
             )}
+          </div>
+        )}
+
+        {activeSession?.previewScene && (
+          <div className="rounded-xl border bg-slate-50 p-3 text-xs dark:bg-slate-900/70">
+            <div className="mb-2 font-medium text-slate-700 dark:text-slate-200">
+              Refine this preview
+            </div>
+            <Textarea
+              value={followUpInstruction}
+              onChange={(event) => setFollowUpInstruction(event.target.value)}
+              disabled={busy}
+              placeholder="例如：在这个预览基础上再短一点，保留刚才新增的内容"
+              className="min-h-16 resize-none bg-white text-xs dark:bg-slate-950"
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="mt-2 w-full"
+              onClick={requestConversationRefine}
+              disabled={busy || followUpInstruction.trim().length === 0}
+            >
+              {busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+              Refine Preview
+            </Button>
           </div>
         )}
 

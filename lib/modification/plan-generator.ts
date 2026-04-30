@@ -4,6 +4,7 @@ import { parseJsonResponse } from '@/lib/generation/json-repair';
 import type {
   ClarificationQuestion,
   EditPlan,
+  ModificationConversationTurn,
   ModifyScenePlanRequest,
 } from '@/lib/types/modification';
 import type { InteractiveContent, QuizContent, Scene, SlideContent } from '@/lib/types/stage';
@@ -69,6 +70,16 @@ function stripElementReference(element: PPTElement): Record<string, unknown> {
     width: element.width,
     height: 'height' in element ? element.height : undefined,
   };
+}
+
+function summarizeConversationHistory(
+  history: ModificationConversationTurn[] | undefined,
+): Array<Pick<ModificationConversationTurn, 'role' | 'content' | 'createdAt'>> {
+  return (history ?? []).slice(-8).map((turn) => ({
+    role: turn.role,
+    content: turn.content.slice(0, 1600),
+    createdAt: turn.createdAt,
+  }));
 }
 
 export function summarizeSceneForModification(
@@ -191,6 +202,7 @@ export async function generateEditPlan(
     mode: request.mode ?? 'scene',
     languageDirective: request.languageDirective ?? 'Use the same language as the user request.',
     selectedElementIds: request.selectedElementIds?.join(', ') ?? '',
+    conversationHistory: summarizeConversationHistory(request.conversationHistory),
     instruction: request.instruction,
     sceneContext: summarizeSceneForModification(request.scene, {
       mode: request.mode,

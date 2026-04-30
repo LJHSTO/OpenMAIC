@@ -143,4 +143,45 @@ describe('generateEditPlan', () => {
     expect(result.success).toBe(true);
     expect(result.plan).toMatchObject({ mode: 'spot', targetElementIds: ['title'] });
   });
+
+  it('passes conversation history to the planner for follow-up refinements', async () => {
+    let userPrompt = '';
+    const result = await generateEditPlan(
+      {
+        scene: slideScene(),
+        instruction: 'Make the preview even shorter',
+        mode: 'conversation',
+        conversationHistory: [
+          { role: 'user', content: 'Simplify the title first', createdAt: 1 },
+          { role: 'assistant', content: 'Plan: shortened the title', createdAt: 2 },
+        ],
+      },
+      async (_systemPrompt, prompt) => {
+        userPrompt = prompt;
+        return JSON.stringify({
+          plan: {
+            id: 'plan_conversation',
+            summary: 'Shorten the preview again',
+            confidence: 0.82,
+            riskLevel: 'low',
+            requiresConfirmation: true,
+            operations: [
+              {
+                type: 'slide.update_element',
+                elementId: 'title',
+                patch: { content: '<p>Shorter</p>' },
+                reason: 'Follow-up refinement requested a shorter preview',
+              },
+            ],
+          },
+        });
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.plan).toMatchObject({ mode: 'conversation' });
+    expect(userPrompt).toContain('Conversation context JSON');
+    expect(userPrompt).toContain('Simplify the title first');
+    expect(userPrompt).toContain('Make the preview even shorter');
+  });
 });

@@ -19,6 +19,12 @@ export interface ClarificationQuestion {
   options?: string[];
 }
 
+export interface ModificationConversationTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: number;
+}
+
 export interface EditPlan {
   id: string;
   summary: string;
@@ -123,6 +129,8 @@ export interface ModificationSession {
   status: ModificationStatus;
   userInstruction: string;
   originalScene: Scene;
+  commitBaseScene?: Scene;
+  conversationHistory?: ModificationConversationTurn[];
   previewBaseScene?: Scene;
   previewScene?: Scene;
   editPlan?: EditPlan;
@@ -140,6 +148,7 @@ export interface ModificationHistoryEntry {
   instruction: string;
   planSummary: string;
   diffSummary?: DiffSummary;
+  conversationHistory?: ModificationConversationTurn[];
   accepted: boolean;
   createdAt: number;
 }
@@ -166,6 +175,7 @@ export interface ModifyScenePlanRequest {
   instruction: string;
   mode?: ModificationMode;
   selectedElementIds?: string[];
+  conversationHistory?: ModificationConversationTurn[];
   languageDirective?: string;
 }
 

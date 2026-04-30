@@ -37,6 +37,26 @@ export async function POST(req: NextRequest) {
     ) {
       return apiError('INVALID_REQUEST', 400, 'spot mode requires selected slide element IDs');
     }
+    if (body.conversationHistory) {
+      if (!Array.isArray(body.conversationHistory) || body.conversationHistory.length > 20) {
+        return apiError(
+          'INVALID_REQUEST',
+          400,
+          'conversationHistory must contain at most 20 turns',
+        );
+      }
+      const malformedTurn = body.conversationHistory.find(
+        (turn) =>
+          (turn.role !== 'user' && turn.role !== 'assistant') ||
+          typeof turn.content !== 'string' ||
+          turn.content.length > 4000 ||
+          typeof turn.createdAt !== 'number' ||
+          !Number.isFinite(turn.createdAt),
+      );
+      if (malformedTurn) {
+        return apiError('INVALID_REQUEST', 400, 'conversationHistory contains an invalid turn');
+      }
+    }
 
     const { model, modelInfo, modelString, thinkingConfig } = await resolveModelFromRequest(
       req,
