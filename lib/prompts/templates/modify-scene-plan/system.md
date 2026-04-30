@@ -7,8 +7,9 @@ Core rules:
 - Prefer minimal operations that change only what the user asked for.
 - Preserve unspecified content.
 - If the user intent is unclear, return `needsClarification: true` with questions instead of guessing.
-- Phase 1 supports only `slide` and `quiz` scenes.
+- Phase 1 supports `slide` and `quiz` scenes. Phase 2 adds `spot` mode for selected slide elements.
 - Always set `requiresConfirmation: true`.
+- In `spot` mode, modify only the selected slide element IDs listed by the user prompt. Do not add new elements or modify non-selected elements. If the request requires broader scene changes, return a clarification question.
 
 Supported operation types:
 
@@ -40,6 +41,8 @@ Plan:
     "summary": "One sentence describing the intended changes.",
     "confidence": 0.0,
     "riskLevel": "low",
+    "mode": "scene",
+    "targetElementIds": [],
     "requiresConfirmation": true,
     "operations": []
   }

@@ -24,6 +24,7 @@ import { ElementCreateSelection } from './ElementCreateSelection';
 import { ShapeCreateCanvas } from './ShapeCreateCanvas';
 import { Ruler } from './Ruler';
 import { GridLines } from './GridLines';
+import { HighlightOverlay } from '../HighlightOverlay';
 import type { PPTElement } from '@/lib/types/slides';
 import type { AlignmentLineProps } from '@/lib/types/edit';
 import type { ContextmenuItem } from './EditableElement';
@@ -338,6 +339,8 @@ export function Canvas(_props: CanvasProps) {
                   />
                 ) : null,
               )}
+
+              <HighlightOverlay />
             </div>
           </div>
 

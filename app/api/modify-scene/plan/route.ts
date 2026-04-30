@@ -25,6 +25,14 @@ export async function POST(req: NextRequest) {
         `Scene type ${body.scene.type} is not supported by modification phase 1`,
       );
     }
+    if (
+      body.mode === 'spot' &&
+      (body.scene.type !== 'slide' ||
+        !body.selectedElementIds ||
+        body.selectedElementIds.length === 0)
+    ) {
+      return apiError('INVALID_REQUEST', 400, 'spot mode requires selected slide element IDs');
+    }
 
     const { model, modelInfo, modelString, thinkingConfig } = await resolveModelFromRequest(
       req,

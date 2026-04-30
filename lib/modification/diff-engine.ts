@@ -64,6 +64,7 @@ export function createDiffSummary(
     return {
       summary: plan.summary,
       changedItems,
+      changedItemIds: [...diff.added, ...diff.updated, ...diff.deleted].map((item) => item.id),
       addedCount: diff.added.length,
       updatedCount: diff.updated.length,
       deletedCount: diff.deleted.length,
@@ -86,6 +87,7 @@ export function createDiffSummary(
     return {
       summary: plan.summary,
       changedItems,
+      changedItemIds: [...diff.added, ...diff.updated, ...diff.deleted].map((item) => item.id),
       addedCount: diff.added.length,
       updatedCount: diff.updated.length,
       deletedCount: diff.deleted.length,
@@ -97,6 +99,7 @@ export function createDiffSummary(
   return {
     summary: plan.summary,
     changedItems: [`场景类型 ${after.type} 的详细 diff 尚未启用`],
+    changedItemIds: [],
     addedCount: 0,
     updatedCount: before.content === after.content ? 0 : 1,
     deletedCount: 0,

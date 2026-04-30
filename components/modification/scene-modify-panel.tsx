@@ -5,11 +5,13 @@ import { Bot, Check, ChevronDown, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useModificationStore, useSnapshotStore, useStageStore } from '@/lib/store';
+import { useCanvasStore } from '@/lib/store/canvas';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { cn } from '@/lib/utils';
 import type {
   DiffSummary,
   EditPlan,
+  ModificationMode,
   ModifyScenePlanRequest,
   ModifyScenePreviewRequest,
 } from '@/lib/types/modification';
@@ -71,6 +73,10 @@ function getStatusLabel(status?: string) {
   }
 }
 
+function sceneContentFingerprint(scene: Scene): string {
+  return JSON.stringify(scene.content);
+}
+
 export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModifyPanelProps) {
   const activeSession = useModificationStore.use.activeSession();
   const isPanelOpen = useModificationStore.use.isPanelOpen();
@@ -87,20 +93,43 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
   const stage = useStageStore.use.stage();
   const updateScene = useStageStore.use.updateScene();
   const addSnapshot = useSnapshotStore((state) => state.addSnapshot);
+  const activeElementIdList = useCanvasStore.use.activeElementIdList();
+  const setHighlight = useCanvasStore.use.setHighlight();
+  const clearHighlight = useCanvasStore.use.clearHighlight();
 
   const [instruction, setInstruction] = useState('');
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [clarification, setClarification] = useState<string[]>([]);
+  const [mode, setMode] = useState<ModificationMode>('scene');
 
   const supported = currentScene?.type === 'slide' || currentScene?.type === 'quiz';
-  const canStart = !!currentScene && supported && instruction.trim().length > 0 && !busy;
+  const selectedSlideElementIds = useMemo(() => {
+    if (currentScene?.type !== 'slide' || currentScene.content.type !== 'slide') return [];
+    const elementIds = new Set(currentScene.content.canvas.elements.map((element) => element.id));
+    return activeElementIdList.filter((id) => elementIds.has(id));
+  }, [activeElementIdList, currentScene]);
+  const canUseSpot = currentScene?.type === 'slide' && selectedSlideElementIds.length > 0;
+  const selectedElementIds = mode === 'spot' && canUseSpot ? selectedSlideElementIds : [];
+  const canStart =
+    !!currentScene &&
+    supported &&
+    instruction.trim().length > 0 &&
+    !busy &&
+    (mode !== 'spot' || selectedElementIds.length > 0);
 
   useEffect(() => {
     if (activeSession && activeSession.sceneId !== currentScene?.id) {
       clearActiveSession();
+      clearHighlight();
     }
-  }, [activeSession, clearActiveSession, currentScene?.id]);
+  }, [activeSession, clearActiveSession, clearHighlight, currentScene?.id]);
+
+  useEffect(() => {
+    if (!canUseSpot && mode === 'spot') setMode('scene');
+  }, [canUseSpot, mode]);
+
+  useEffect(() => () => clearHighlight(), [clearHighlight]);
 
   const operationCount = activeSession?.editPlan?.operations.length ?? 0;
   const riskClass = useMemo(() => {
@@ -121,13 +150,19 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
     setClarification([]);
 
     try {
-      startSession({ stageId: stage.id, scene: currentScene, instruction: instruction.trim() });
+      startSession({
+        stageId: stage.id,
+        scene: currentScene,
+        instruction: instruction.trim(),
+        mode,
+      });
       const body: ModifyScenePlanRequest = {
         stageId: stage.id,
         sceneId: currentScene.id,
         scene: currentScene,
         instruction: instruction.trim(),
-        mode: 'scene',
+        mode,
+        selectedElementIds: selectedElementIds.length > 0 ? selectedElementIds : undefined,
         languageDirective: stage.languageDirective,
       };
 
@@ -161,12 +196,14 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
 
   const requestPreview = async () => {
     if (!activeSession?.editPlan) return;
+    const previewBaseScene =
+      currentScene?.id === activeSession.sceneId ? currentScene : activeSession.originalScene;
     setBusy(true);
     setLocalError(null);
     setStatus('executing_preview');
     try {
       const body: ModifyScenePreviewRequest = {
-        scene: activeSession.originalScene,
+        scene: previewBaseScene,
         plan: activeSession.editPlan,
       };
       const response = await fetch('/api/modify-scene/preview', {
@@ -179,7 +216,17 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
         throw new Error(data.error || `HTTP ${response.status}`);
       }
       if (!data.previewScene || !data.diffSummary) throw new Error('No preview returned');
-      setPreview(data.previewScene, data.diffSummary);
+      setPreview(data.previewScene, data.diffSummary, previewBaseScene);
+      if (data.previewScene.type === 'slide' && data.diffSummary.changedItemIds.length > 0) {
+        setHighlight(data.diffSummary.changedItemIds, {
+          color: '#10b981',
+          opacity: 0.24,
+          borderWidth: 3,
+          animated: true,
+        });
+      } else {
+        clearHighlight();
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setLocalError(message);
@@ -190,12 +237,22 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
   };
 
   const acceptPreview = async () => {
-    if (!activeSession?.previewScene) return;
+    if (!activeSession?.previewScene || !currentScene) return;
     setBusy(true);
     setLocalError(null);
     try {
+      if (
+        activeSession.previewBaseScene &&
+        sceneContentFingerprint(currentScene) !==
+          sceneContentFingerprint(activeSession.previewBaseScene)
+      ) {
+        throw new Error(
+          'The scene changed after preview was generated. Reject and regenerate preview.',
+        );
+      }
       await addSnapshot();
       updateScene(activeSession.sceneId, activeSession.previewScene);
+      clearHighlight();
       markAccepted();
       closePanel();
     } catch (error) {
@@ -209,9 +266,18 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
 
   const rejectPreview = () => {
     rejectActiveSession();
+    clearHighlight();
     setClarification([]);
     setLocalError(null);
   };
+
+  const quickInstructions = [
+    '把选中的文字改得更简洁，保留核心含义',
+    '把选中元素改得更适合小学生理解',
+    '把选中元素居中并优化版面位置',
+    '把选中元素放大一点，保持不遮挡其他内容',
+    '把选中元素颜色改得更醒目但保持整体风格',
+  ];
 
   if (!currentScene || !supported) return null;
 
@@ -258,6 +324,60 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
           placeholder="例如：把这页改得更适合小学生，并保留核心知识点"
           className="min-h-24 resize-none bg-white dark:bg-slate-900"
         />
+
+        {currentScene.type === 'slide' && (
+          <div className="rounded-xl border bg-slate-50 p-2.5 text-xs dark:bg-slate-900/70">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="font-medium text-slate-700 dark:text-slate-200">Edit scope</span>
+              <span className="text-muted-foreground">
+                {selectedSlideElementIds.length} selected element(s)
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant={mode === 'scene' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setMode('scene')}
+                disabled={busy || !!activeSession}
+              >
+                Whole scene
+              </Button>
+              <Button
+                type="button"
+                variant={mode === 'spot' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setMode('spot')}
+                disabled={busy || !!activeSession || !canUseSpot}
+              >
+                Selected only
+              </Button>
+            </div>
+            {mode === 'spot' && (
+              <div className="mt-2 text-muted-foreground">
+                Spot edit locks the AI plan to the selected element IDs.
+              </div>
+            )}
+          </div>
+        )}
+
+        {mode === 'spot' && canUseSpot && !activeSession?.editPlan && (
+          <div className="flex flex-wrap gap-1.5">
+            {quickInstructions.map((quickInstruction) => (
+              <Button
+                key={quickInstruction}
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-7 rounded-full px-2 text-[11px]"
+                onClick={() => setInstruction(quickInstruction)}
+                disabled={busy}
+              >
+                {quickInstruction.replace('把选中元素', '').replace('把选中的文字', '文字')}
+              </Button>
+            ))}
+          </div>
+        )}
 
         {clarification.length > 0 && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
@@ -309,7 +429,13 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
         )}
 
         <div className="flex flex-wrap justify-end gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={rejectPreview} disabled={busy}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={rejectPreview}
+            disabled={busy || !activeSession}
+          >
             Reject
           </Button>
           {!activeSession?.editPlan && (

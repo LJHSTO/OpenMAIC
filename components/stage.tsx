@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useStageStore } from '@/lib/store';
+import { useModificationStore, useStageStore } from '@/lib/store';
 import { PENDING_SCENE_ID } from '@/lib/store/stage';
 import { useCanvasStore } from '@/lib/store/canvas';
 import { useSettingsStore } from '@/lib/store/settings';
@@ -60,6 +60,12 @@ export function Stage({
   const failedOutlines = useStageStore.use.failedOutlines();
 
   const currentScene = getCurrentScene();
+  const activeModificationSession = useModificationStore.use.activeSession();
+  const modificationPreviewScene =
+    activeModificationSession && activeModificationSession.sceneId === currentScene?.id
+      ? activeModificationSession.previewScene
+      : undefined;
+  const displayedScene = modificationPreviewScene ?? currentScene;
 
   // Layout state from settings store (persisted via localStorage)
   const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
@@ -987,7 +993,7 @@ export function Stage({
           suppressHydrationWarning
         >
           <CanvasArea
-            currentScene={currentScene}
+            currentScene={displayedScene}
             currentSceneIndex={currentSceneIndex}
             scenesCount={totalScenesCount}
             mode={mode}
@@ -1017,6 +1023,7 @@ export function Stage({
             isGenerationFailed={
               isPendingScene && failedOutlines.some((f) => f.id === generatingOutlines[0]?.id)
             }
+            isModificationPreview={!!modificationPreviewScene}
             onRetryGeneration={
               onRetryOutline && generatingOutlines[0]
                 ? () => onRetryOutline(generatingOutlines[0].id)

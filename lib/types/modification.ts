@@ -24,6 +24,8 @@ export interface EditPlan {
   confidence: number;
   riskLevel: 'low' | 'medium' | 'high';
   requiresConfirmation: boolean;
+  mode?: ModificationMode;
+  targetElementIds?: string[];
   operations: EditOperation[];
   clarificationQuestions?: ClarificationQuestion[];
 }
@@ -83,6 +85,7 @@ export type QuizEditOperation =
 export interface DiffSummary {
   summary: string;
   changedItems: string[];
+  changedItemIds: string[];
   addedCount: number;
   updatedCount: number;
   deletedCount: number;
@@ -99,6 +102,7 @@ export interface ModificationSession {
   status: ModificationStatus;
   userInstruction: string;
   originalScene: Scene;
+  previewBaseScene?: Scene;
   previewScene?: Scene;
   editPlan?: EditPlan;
   diffSummary?: DiffSummary;

@@ -30,7 +30,7 @@ interface ModificationState {
   startSession: (params: StartSessionParams) => string;
   setStatus: (status: ModificationStatus) => void;
   setPlan: (plan: EditPlan) => void;
-  setPreview: (previewScene: Scene, diffSummary: DiffSummary) => void;
+  setPreview: (previewScene: Scene, diffSummary: DiffSummary, previewBaseScene?: Scene) => void;
   setError: (error: string) => void;
   markAccepted: () => void;
   rejectActiveSession: () => void;
@@ -116,12 +116,13 @@ const useModificationStoreBase = create<ModificationState>()((set, get) => ({
     });
   },
 
-  setPreview: (previewScene, diffSummary) => {
+  setPreview: (previewScene, diffSummary, previewBaseScene) => {
     const session = get().activeSession;
     if (!session) return;
     set({
       activeSession: {
         ...session,
+        previewBaseScene: previewBaseScene ? cloneScene(previewBaseScene) : session.originalScene,
         previewScene: cloneScene(previewScene),
         diffSummary,
         status: 'previewing',

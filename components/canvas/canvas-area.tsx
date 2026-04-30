@@ -20,6 +20,7 @@ interface CanvasAreaProps extends CanvasToolbarProps {
   readonly isPendingScene?: boolean;
   readonly isCourseComplete?: boolean;
   readonly isGenerationFailed?: boolean;
+  readonly isModificationPreview?: boolean;
   readonly onRetryGeneration?: () => void;
 }
 
@@ -47,6 +48,7 @@ export function CanvasArea({
   isPendingScene,
   isCourseComplete,
   isGenerationFailed,
+  isModificationPreview,
   onRetryGeneration,
 }: CanvasAreaProps) {
   const { t } = useI18n();
@@ -113,9 +115,25 @@ export function CanvasArea({
           {/* Scene Content */}
           {currentScene && !whiteboardOpen && (
             <div className="absolute inset-0">
-              <SceneProvider>
+              <SceneProvider scene={currentScene} readOnly={isModificationPreview}>
                 <SceneRenderer scene={currentScene} mode={mode} />
               </SceneProvider>
+            </div>
+          )}
+
+          {isModificationPreview && (
+            <div
+              className="absolute inset-0 z-[102] cursor-not-allowed"
+              aria-hidden="true"
+              title="Preview is read-only"
+              onClick={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
+            />
+          )}
+
+          {isModificationPreview && (
+            <div className="absolute top-4 left-4 z-[103] rounded-full border border-emerald-200 bg-emerald-50/95 px-3 py-1 text-xs font-medium text-emerald-700 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/90 dark:text-emerald-200">
+              Preview only · not applied
             </div>
           )}
 

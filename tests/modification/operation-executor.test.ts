@@ -103,6 +103,72 @@ describe('executeEditPlan', () => {
       content: '<p>Old title</p>',
     });
     expect(result.diffSummary?.updatedCount).toBe(1);
+    expect(result.diffSummary?.changedItemIds).toEqual(['title']);
+  });
+
+  it('keeps spot edits scoped to selected slide elements', () => {
+    const scene = slideScene([
+      textElement(),
+      textElement({ id: 'subtitle', content: '<p>Old subtitle</p>' }),
+    ]);
+    const plan: EditPlan = {
+      id: 'plan_spot',
+      summary: 'Try to modify an unselected element',
+      confidence: 0.9,
+      riskLevel: 'low',
+      requiresConfirmation: true,
+      mode: 'spot',
+      targetElementIds: ['title'],
+      operations: [
+        {
+          type: 'slide.update_element',
+          elementId: 'subtitle',
+          patch: { content: '<p>New subtitle</p>' },
+          reason: 'Invalid spot target',
+        },
+      ],
+    };
+
+    const result = executeEditPlan(scene, plan);
+
+    expect(result.success).toBe(false);
+    expect(result.errors.join('\n')).toContain('spot edit can only change selected element IDs');
+  });
+
+  it('applies valid spot edits to selected slide elements', () => {
+    const scene = slideScene([
+      textElement(),
+      textElement({ id: 'subtitle', content: '<p>Old subtitle</p>' }),
+    ]);
+    const plan: EditPlan = {
+      id: 'plan_spot_valid',
+      summary: 'Shorten selected title',
+      confidence: 0.9,
+      riskLevel: 'low',
+      requiresConfirmation: true,
+      mode: 'spot',
+      targetElementIds: ['title'],
+      operations: [
+        {
+          type: 'slide.update_element',
+          elementId: 'title',
+          patch: { content: '<p>Short title</p>' },
+          reason: 'Selected title requested by user',
+        },
+      ],
+    };
+
+    const result = executeEditPlan(scene, plan);
+
+    expect(result.success).toBe(true);
+    const preview =
+      result.previewScene?.content.type === 'slide' ? result.previewScene.content : null;
+    expect(preview?.canvas.elements.find((element) => element.id === 'title')).toMatchObject({
+      content: '<p>Short title</p>',
+    });
+    expect(preview?.canvas.elements.find((element) => element.id === 'subtitle')).toMatchObject({
+      content: '<p>Old subtitle</p>',
+    });
   });
 
   it('rejects a slide operation targeting an unknown element', () => {
@@ -127,6 +193,78 @@ describe('executeEditPlan', () => {
 
     expect(result.success).toBe(false);
     expect(result.errors.join('\n')).toContain('element not found');
+  });
+
+  it('rejects unsafe slide HTML patches', () => {
+    const scene = slideScene();
+    const plan: EditPlan = {
+      id: 'plan_xss',
+      summary: 'Inject unsafe HTML',
+      confidence: 0.9,
+      riskLevel: 'low',
+      requiresConfirmation: true,
+      operations: [
+        {
+          type: 'slide.update_element',
+          elementId: 'title',
+          patch: { content: '<img src=x onerror=alert(1) />' },
+          reason: 'Unsafe content',
+        },
+      ],
+    };
+
+    const result = executeEditPlan(scene, plan);
+
+    expect(result.success).toBe(false);
+    expect(result.errors.join('\n')).toContain('unsafe HTML');
+  });
+
+  it('rejects entity-encoded unsafe slide URLs', () => {
+    const scene = slideScene();
+    const plan: EditPlan = {
+      id: 'plan_encoded_xss',
+      summary: 'Inject encoded unsafe URL',
+      confidence: 0.9,
+      riskLevel: 'low',
+      requiresConfirmation: true,
+      operations: [
+        {
+          type: 'slide.update_element',
+          elementId: 'title',
+          patch: { content: '<a href="java&#x73;cript:alert(1)">click</a>' },
+          reason: 'Unsafe encoded URL',
+        },
+      ],
+    };
+
+    const result = executeEditPlan(scene, plan);
+
+    expect(result.success).toBe(false);
+    expect(result.errors.join('\n')).toContain('unsafe HTML');
+  });
+
+  it('rejects invalid slide geometry patches', () => {
+    const scene = slideScene();
+    const plan: EditPlan = {
+      id: 'plan_bad_geometry',
+      summary: 'Break geometry',
+      confidence: 0.9,
+      riskLevel: 'low',
+      requiresConfirmation: true,
+      operations: [
+        {
+          type: 'slide.update_element',
+          elementId: 'title',
+          patch: { width: -1 },
+          reason: 'Invalid geometry',
+        },
+      ],
+    };
+
+    const result = executeEditPlan(scene, plan);
+
+    expect(result.success).toBe(false);
+    expect(result.errors.join('\n')).toContain('width must be a positive number');
   });
 
   it('updates quiz questions and allows changing question type', () => {

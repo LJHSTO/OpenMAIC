@@ -35,14 +35,21 @@ const SceneContext = createContext<SceneContextValue | null>(null);
  *   <SlideRenderer /> // Uses useSceneData<SlideContent>()
  * </SceneProvider>
  */
-export function SceneProvider({ children }: { children: React.ReactNode }) {
+interface SceneProviderProps {
+  children: React.ReactNode;
+  scene?: Scene | null;
+  readOnly?: boolean;
+}
+
+export function SceneProvider({ children, scene, readOnly = false }: SceneProviderProps) {
   // Subscribe to current scene
-  const currentScene = useStageStore((state) => {
+  const storeCurrentScene = useStageStore((state) => {
     if (!state.currentSceneId) return null;
     return state.scenes.find((s) => s.id === state.currentSceneId) || null;
   });
 
   const updateScene = useStageStore((state) => state.updateScene);
+  const currentScene = scene ?? storeCurrentScene;
 
   const sceneId = currentScene?.id || '';
   const sceneType = currentScene?.type || 'slide';
@@ -72,14 +79,14 @@ export function SceneProvider({ children }: { children: React.ReactNode }) {
   // Update scene data with Immer
   const updateSceneData = useCallback(
     (updater: (draft: unknown) => void) => {
-      if (!currentScene) return;
+      if (!currentScene || readOnly) return;
 
       const newContent = produce(currentScene.content, updater);
       updateScene(currentScene.id, {
         content: newContent,
       });
     },
-    [currentScene, updateScene],
+    [currentScene, readOnly, updateScene],
   );
 
   const value = useMemo(

@@ -1,4 +1,5 @@
 import { createDiffSummary } from '@/lib/modification/diff-engine';
+import { sanitizeStringsDeep } from '@/lib/modification/sanitize';
 import { validateEditPlanForScene } from '@/lib/modification/validators';
 import type { EditPlan, ExecuteEditPlanResult } from '@/lib/types/modification';
 import type { QuizContent, Scene, SlideContent } from '@/lib/types/stage';
@@ -29,7 +30,7 @@ function applySlideOperations(scene: Scene, plan: EditPlan, appliedOperationIds:
   plan.operations.forEach((operation, index) => {
     switch (operation.type) {
       case 'slide.update_element': {
-        const safePatch = withoutIdentityPatch(operation.patch);
+        const safePatch = sanitizeStringsDeep(withoutIdentityPatch(operation.patch));
         elements = elements.map((element) =>
           element.id === operation.elementId
             ? ({ ...element, ...safePatch } as PPTElement)
@@ -39,7 +40,7 @@ function applySlideOperations(scene: Scene, plan: EditPlan, appliedOperationIds:
         break;
       }
       case 'slide.add_element': {
-        elements = [...elements, clone(operation.element)];
+        elements = [...elements, sanitizeStringsDeep(clone(operation.element))];
         appliedOperationIds.push(getOperationId(plan, index));
         break;
       }
@@ -76,7 +77,7 @@ function applyQuizOperations(scene: Scene, plan: EditPlan, appliedOperationIds: 
   plan.operations.forEach((operation, index) => {
     switch (operation.type) {
       case 'quiz.update_question': {
-        const safePatch = withoutIdPatch(operation.patch);
+        const safePatch = sanitizeStringsDeep(withoutIdPatch(operation.patch));
         questions = questions.map((question) =>
           question.id === operation.questionId ? { ...question, ...safePatch } : question,
         );
@@ -84,7 +85,7 @@ function applyQuizOperations(scene: Scene, plan: EditPlan, appliedOperationIds: 
         break;
       }
       case 'quiz.add_question': {
-        questions = [...questions, clone(operation.question)];
+        questions = [...questions, sanitizeStringsDeep(clone(operation.question))];
         appliedOperationIds.push(getOperationId(plan, index));
         break;
       }

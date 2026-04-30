@@ -59,9 +59,31 @@ function stripElementForPrompt(element: PPTElement): Record<string, unknown> {
   return base;
 }
 
-export function summarizeSceneForModification(scene: Scene): Record<string, unknown> {
+function stripElementReference(element: PPTElement): Record<string, unknown> {
+  return {
+    id: element.id,
+    type: element.type,
+    name: element.name,
+    left: element.left,
+    top: element.top,
+    width: element.width,
+    height: 'height' in element ? element.height : undefined,
+  };
+}
+
+export function summarizeSceneForModification(
+  scene: Scene,
+  options: Pick<ModifyScenePlanRequest, 'mode' | 'selectedElementIds'> = {},
+): Record<string, unknown> {
   if (scene.type === 'slide') {
     const content = scene.content as SlideContent;
+    const selectedIds = options.selectedElementIds ?? [];
+    const selectedIdSet = new Set(selectedIds);
+    const targetElements = content.canvas.elements.filter((element) =>
+      selectedIdSet.has(element.id),
+    );
+    const isSpotMode = options.mode === 'spot' && selectedIds.length > 0;
+
     return {
       id: scene.id,
       type: scene.type,
@@ -71,7 +93,19 @@ export function summarizeSceneForModification(scene: Scene): Record<string, unkn
         viewportRatio: content.canvas.viewportRatio,
         theme: content.canvas.theme,
         background: content.canvas.background,
-        elements: content.canvas.elements.map(stripElementForPrompt),
+        elements: isSpotMode
+          ? targetElements.map(stripElementForPrompt)
+          : content.canvas.elements.map(stripElementForPrompt),
+        targetElementIds: isSpotMode ? selectedIds : undefined,
+        targetElements: isSpotMode ? targetElements.map(stripElementForPrompt) : undefined,
+        otherElementRefs: isSpotMode
+          ? content.canvas.elements
+              .filter((element) => !selectedIdSet.has(element.id))
+              .map(stripElementReference)
+          : undefined,
+        missingTargetElementIds: isSpotMode
+          ? selectedIds.filter((id) => !targetElements.some((element) => element.id === id))
+          : undefined,
       },
     };
   }
@@ -103,9 +137,13 @@ function normalizeConfidence(value: unknown): number {
   return Math.max(0, Math.min(1, value));
 }
 
-function normalizePlan(response: LLMPlanResponse): EditPlan | null {
+function normalizePlan(
+  response: LLMPlanResponse,
+  request: ModifyScenePlanRequest,
+): EditPlan | null {
   const candidate = response.plan ?? response;
   if (!candidate || !Array.isArray(candidate.operations)) return null;
+  const selectedElementIds = request.selectedElementIds?.filter(Boolean) ?? [];
 
   return {
     id: typeof candidate.id === 'string' && candidate.id ? candidate.id : `plan_${nanoid(8)}`,
@@ -116,6 +154,8 @@ function normalizePlan(response: LLMPlanResponse): EditPlan | null {
     confidence: normalizeConfidence(candidate.confidence),
     riskLevel: normalizeRiskLevel(candidate.riskLevel),
     requiresConfirmation: true,
+    mode: request.mode ?? 'scene',
+    targetElementIds: selectedElementIds.length > 0 ? selectedElementIds : undefined,
     operations: candidate.operations,
     clarificationQuestions: candidate.clarificationQuestions,
   };
@@ -132,7 +172,10 @@ export async function generateEditPlan(
     languageDirective: request.languageDirective ?? 'Use the same language as the user request.',
     selectedElementIds: request.selectedElementIds?.join(', ') ?? '',
     instruction: request.instruction,
-    sceneContext: summarizeSceneForModification(request.scene),
+    sceneContext: summarizeSceneForModification(request.scene, {
+      mode: request.mode,
+      selectedElementIds: request.selectedElementIds,
+    }),
   });
 
   if (!prompt) {
@@ -155,7 +198,7 @@ export async function generateEditPlan(
     };
   }
 
-  const plan = normalizePlan(parsed);
+  const plan = normalizePlan(parsed, request);
   if (!plan) {
     return { success: false, rawResponse, error: 'Parsed response did not contain a valid plan' };
   }
