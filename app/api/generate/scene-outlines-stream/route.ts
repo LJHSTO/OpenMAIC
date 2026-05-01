@@ -130,7 +130,17 @@ export async function POST(req: NextRequest) {
   let requirementSnippet: string | undefined;
   let resolvedModelString: string | undefined;
   try {
-    const body = await req.json();
+    let parsedBody: unknown;
+    try {
+      parsedBody = await req.json();
+    } catch {
+      return apiError('INVALID_REQUEST', 400, 'Request body must be valid JSON');
+    }
+
+    if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+      return apiError('INVALID_REQUEST', 400, 'Request body must be a JSON object');
+    }
+    const body = parsedBody as Record<string, unknown>;
 
     // Get API configuration from request headers/body
     const {

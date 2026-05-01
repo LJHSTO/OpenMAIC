@@ -21,106 +21,117 @@ async function seedDatabase(page: import('@playwright/test').Page) {
   // Now seed data by opening the DB at its current version (no upgrade).
   // Opening without a version number returns the current version without triggering
   // onupgradeneeded, so we can safely write to the already-initialized schema.
-  await page.evaluate(
-    ({ stageId, theme }) => {
-      return new Promise<void>((resolve, reject) => {
-        // Open without specifying version — uses current DB version, no upgrade event
-        const request = indexedDB.open('MAIC-Database');
+  const seed = () =>
+    page.evaluate(
+      ({ stageId, theme }) => {
+        return new Promise<void>((resolve, reject) => {
+          // Open without specifying version — uses current DB version, no upgrade event
+          const request = indexedDB.open('MAIC-Database');
 
-        request.onsuccess = (event) => {
-          const db = (event.target as IDBOpenDBRequest).result;
-          const tx = db.transaction(['stages', 'scenes', 'stageOutlines'], 'readwrite');
-          const now = Date.now();
+          request.onsuccess = (event) => {
+            const db = (event.target as IDBOpenDBRequest).result;
+            const tx = db.transaction(['stages', 'scenes', 'stageOutlines'], 'readwrite');
+            const now = Date.now();
 
-          tx.objectStore('stages').put({
-            id: stageId,
-            name: '光合作用',
-            description: '',
-            language: 'zh-CN',
-            style: 'professional',
-            createdAt: now,
-            updatedAt: now,
-          });
-
-          // Scene content uses SlideContent shape: { type: 'slide', canvas: Slide }
-          const makeSlideContent = (title: string, elId: string) => ({
-            type: 'slide',
-            canvas: {
-              id: `slide-${elId}`,
-              viewportSize: 1000,
-              viewportRatio: 0.5625,
-              theme,
-              elements: [
-                {
-                  type: 'text',
-                  id: `el-${elId}`,
-                  content: title,
-                  left: 50,
-                  top: 50,
-                  width: 900,
-                  height: 100,
-                },
-              ],
-            },
-          });
-
-          const scenes = [
-            {
-              id: 'scene-0',
-              stageId,
-              type: 'slide',
-              title: '基本概念',
-              order: 0,
-              content: makeSlideContent('基本概念', '0'),
+            tx.objectStore('stages').put({
+              id: stageId,
+              name: '光合作用',
+              description: '',
+              language: 'zh-CN',
+              style: 'professional',
               createdAt: now,
               updatedAt: now,
-            },
-            {
-              id: 'scene-1',
-              stageId,
+            });
+
+            // Scene content uses SlideContent shape: { type: 'slide', canvas: Slide }
+            const makeSlideContent = (title: string, elId: string) => ({
               type: 'slide',
-              title: '光反应',
-              order: 1,
-              content: makeSlideContent('光反应', '1'),
+              canvas: {
+                id: `slide-${elId}`,
+                viewportSize: 1000,
+                viewportRatio: 0.5625,
+                theme,
+                elements: [
+                  {
+                    type: 'text',
+                    id: `el-${elId}`,
+                    content: title,
+                    left: 50,
+                    top: 50,
+                    width: 900,
+                    height: 100,
+                  },
+                ],
+              },
+            });
+
+            const scenes = [
+              {
+                id: 'scene-0',
+                stageId,
+                type: 'slide',
+                title: '基本概念',
+                order: 0,
+                content: makeSlideContent('基本概念', '0'),
+                createdAt: now,
+                updatedAt: now,
+              },
+              {
+                id: 'scene-1',
+                stageId,
+                type: 'slide',
+                title: '光反应',
+                order: 1,
+                content: makeSlideContent('光反应', '1'),
+                createdAt: now,
+                updatedAt: now,
+              },
+              {
+                id: 'scene-2',
+                stageId,
+                type: 'slide',
+                title: '暗反应',
+                order: 2,
+                content: makeSlideContent('暗反应', '2'),
+                createdAt: now,
+                updatedAt: now,
+              },
+            ];
+            for (const scene of scenes) {
+              tx.objectStore('scenes').put(scene);
+            }
+
+            // Empty outlines = all scenes generated, no pending work
+            // StageOutlinesRecord requires createdAt + updatedAt
+            tx.objectStore('stageOutlines').put({
+              stageId,
+              outlines: [],
               createdAt: now,
               updatedAt: now,
-            },
-            {
-              id: 'scene-2',
-              stageId,
-              type: 'slide',
-              title: '暗反应',
-              order: 2,
-              content: makeSlideContent('暗反应', '2'),
-              createdAt: now,
-              updatedAt: now,
-            },
-          ];
-          for (const scene of scenes) {
-            tx.objectStore('scenes').put(scene);
-          }
+            });
 
-          // Empty outlines = all scenes generated, no pending work
-          // StageOutlinesRecord requires createdAt + updatedAt
-          tx.objectStore('stageOutlines').put({
-            stageId,
-            outlines: [],
-            createdAt: now,
-            updatedAt: now,
-          });
-
-          tx.oncomplete = () => {
-            db.close();
-            resolve();
+            tx.oncomplete = () => {
+              db.close();
+              resolve();
+            };
+            tx.onerror = () => reject(tx.error);
           };
-          tx.onerror = () => reject(tx.error);
-        };
 
-        request.onerror = () => reject(request.error);
-      });
-    },
-    { stageId: TEST_STAGE_ID, theme: defaultTheme },
-  );
+          request.onerror = () => reject(request.error);
+        });
+      },
+      { stageId: TEST_STAGE_ID, theme: defaultTheme },
+    );
+
+  try {
+    await seed();
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes('Execution context was destroyed')) {
+      throw error;
+    }
+    await page.waitForLoadState('domcontentloaded');
+    await seed();
+  }
 }
 
 test.describe('Classroom Interaction', () => {
