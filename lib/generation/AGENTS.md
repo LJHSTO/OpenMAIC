@@ -7,6 +7,7 @@ Two-stage lesson generation pipeline: outline → scenes. Main entry for all con
 | Task | File |
 |------|------|
 | Pipeline entry point | `pipeline-runner.ts` |
+| Pipeline orchestration (alt entry) | `generation-pipeline.ts` |
 | Stage 1: outline generation | `outline-generator.ts` |
 | Stage 2: scene content | `scene-generator.ts` |
 | Interactive post-processing | `interactive-post-processor.ts` |

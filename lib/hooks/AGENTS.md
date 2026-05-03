@@ -1,6 +1,6 @@
 # lib/hooks
 
-React custom hooks (13 files). All are client-side only.
+React custom hooks (13 files: 11 `.ts` + 2 `.tsx`). All are client-side only.
 
 ## WHERE TO LOOK
 

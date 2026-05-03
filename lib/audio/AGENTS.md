@@ -22,7 +22,7 @@ TTS (Text-to-Speech) and ASR (Automatic Speech Recognition) provider layer.
 
 - Always validate API key if `requiresApiKey` is true (`tts-providers.ts:84`, `asr-providers.ts:135`).
 - VoxCPM2 supports three backends: vLLM-Omni (`/v1/audio/speech`), Python API (`/tts/upload`), Nano-vLLM (`/generate`).
-- Teacher always uses global lecture voice from settings — single source of truth (`use-discussion-tts.ts:114`).
+- Teacher always uses global lecture voice from settings — single source of truth (`lib/hooks/use-discussion-tts.ts:114`).
 - Language uncertain or mixed → use `"auto"` for ASR, do not specify language parameter (`constants.ts`).
 - Voice cloning clips stored in IndexedDB, sent to VoxCPM backend per synthesis.
 

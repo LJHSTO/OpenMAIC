@@ -14,8 +14,8 @@ Image and video generation provider layer.
 
 ## CONVENTIONS
 
-- `adapters/` contains per-provider adapters (e.g., `minimax-video-adapter.ts` uses submit + poll pattern).
-- MiniMax video: POST `/v1/video_generation` (submit) → GET `/v1/query/video_generation?task_id=xxx` (poll).
+- `adapters/` contains 9 per-provider adapters (MiniMax, Grok, Kling, Qwen, OpenAI, Seedance, Seedream, Veo, Nano-Banana). Video adapters use submit + poll pattern.
+- MiniMax video example: POST `/v1/video_generation` (submit) → GET `/v1/query/video_generation?task_id=xxx` (poll).
 - `media-orchestrator.ts` coordinates image and video generation during scene building.
 - Image and video providers are configured separately from LLM providers (separate env vars: `IMAGE_*`, `VIDEO_*`).
 
