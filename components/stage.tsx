@@ -60,11 +60,10 @@ export function Stage({
   const failedOutlines = useStageStore.use.failedOutlines();
 
   const currentScene = getCurrentScene();
-  const activeModificationSession = useModificationStore.use.activeSession();
-  const modificationPreviewScene =
-    activeModificationSession && activeModificationSession.sceneId === currentScene?.id
-      ? activeModificationSession.previewScene
-      : undefined;
+  const modificationSessionsBySceneId = useModificationStore.use.sessionsBySceneId();
+  const modificationPreviewScene = currentScene
+    ? modificationSessionsBySceneId[currentScene.id]?.previewScene
+    : undefined;
   const displayedScene = modificationPreviewScene ?? currentScene;
 
   // Layout state from settings store (persisted via localStorage)
@@ -1030,7 +1029,7 @@ export function Stage({
                 : undefined
             }
           />
-          {!isPresenting && !isCourseComplete && (
+          {!isPresenting && (
             <SceneModifyPanel
               currentScene={currentScene}
               rightOffset={chatAreaCollapsed ? 16 : chatAreaWidth + 16}

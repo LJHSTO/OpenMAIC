@@ -106,8 +106,9 @@ function buildConversationHistory(session: ModificationSession): ModificationCon
 }
 
 export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModifyPanelProps) {
-  const activeSession = useModificationStore.use.activeSession();
+  const sessionsBySceneId = useModificationStore.use.sessionsBySceneId();
   const isPanelOpen = useModificationStore.use.isPanelOpen();
+  const setActiveScene = useModificationStore.use.setActiveScene();
   const openPanel = useModificationStore.use.openPanel();
   const closePanel = useModificationStore.use.closePanel();
   const startSession = useModificationStore.use.startSession();
@@ -131,6 +132,7 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
   const [clarification, setClarification] = useState<string[]>([]);
   const [followUpInstruction, setFollowUpInstruction] = useState('');
   const [mode, setMode] = useState<ModificationMode>('scene');
+  const activeSession = currentScene ? sessionsBySceneId[currentScene.id] : undefined;
 
   const supported =
     currentScene?.type === 'slide' ||
@@ -151,11 +153,9 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
     (mode !== 'spot' || selectedElementIds.length > 0);
 
   useEffect(() => {
-    if (activeSession && activeSession.sceneId !== currentScene?.id) {
-      clearActiveSession();
-      clearHighlight();
-    }
-  }, [activeSession, clearActiveSession, clearHighlight, currentScene?.id]);
+    setActiveScene(currentScene?.id ?? null);
+    clearHighlight();
+  }, [clearHighlight, currentScene?.id, setActiveScene]);
 
   useEffect(() => {
     if (!canUseSpot && mode === 'spot') setMode('scene');
@@ -298,7 +298,7 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
         scene: previewScene,
         instruction: followUp,
         mode: 'conversation',
-        conversationHistory,
+        conversationHistory: nextConversationHistory,
         languageDirective: stage.languageDirective,
       };
 
@@ -400,7 +400,7 @@ export function SceneModifyPanel({ currentScene, rightOffset = 16 }: SceneModify
         size="sm"
         className="absolute top-4 z-40 shadow-lg shadow-purple-500/15"
         style={{ right: rightOffset }}
-        onClick={openPanel}
+        onClick={() => openPanel(currentScene.id)}
       >
         <Sparkles className="size-4" />
         Customize
