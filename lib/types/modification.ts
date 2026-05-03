@@ -1,6 +1,6 @@
 import type { Scene, SceneType, QuizQuestion } from '@/lib/types/stage';
 import type { PPTElement } from '@/lib/types/slides';
-import type { TeacherAction, WidgetConfig } from '@/lib/types/widgets';
+import type { TeacherAction, WidgetConfig, WidgetType } from '@/lib/types/widgets';
 
 export type ModificationMode = 'spot' | 'scene' | 'conversation';
 
@@ -107,6 +107,15 @@ export type InteractiveEditOperation =
       type: 'interactive.update_teacher_actions';
       teacherActions: TeacherAction[];
       reason: string;
+    }
+  | {
+      id?: string;
+      type: 'interactive.replace_html';
+      html: string;
+      widgetType?: WidgetType;
+      widgetConfig?: WidgetConfig;
+      teacherActions?: TeacherAction[];
+      reason: string;
     };
 
 export interface DiffSummary {
@@ -139,6 +148,8 @@ export interface ModificationSession {
   createdAt: number;
   updatedAt: number;
 }
+
+export type ModificationSessionsBySceneId = Record<string, ModificationSession>;
 
 export interface ModificationHistoryEntry {
   id: string;
