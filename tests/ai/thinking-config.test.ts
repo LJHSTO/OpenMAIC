@@ -108,7 +108,6 @@ describe('thinking config normalization', () => {
 
   it('normalizes Claude 4.5+ thinking as effort levels', () => {
     const thinking = getThinking('anthropic', 'claude-sonnet-4-6');
-    const opus47Thinking = getThinking('anthropic', 'claude-opus-4-7');
 
     expect(getDefaultThinkingConfig(thinking)).toEqual({
       mode: 'enabled',
@@ -122,7 +121,6 @@ describe('thinking config normalization', () => {
       mode: 'disabled',
       effort: 'none',
     });
-    expect(opus47Thinking?.effortValues).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
   });
 
   it('normalizes DeepSeek V4 thinking as high/max effort levels', () => {

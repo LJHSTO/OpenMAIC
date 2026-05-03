@@ -413,7 +413,59 @@ describe('executeEditPlan', () => {
     expect(preview?.html).toContain('$3 literally');
   });
 
-  it('rejects unsupported interactive HTML replacement operations', () => {
+  it('replaces interactive HTML and synchronizes widget metadata', () => {
+    const scene = interactiveScene();
+    const nextConfig: WidgetConfig = {
+      type: 'game',
+      gameType: 'quiz',
+      description: 'A mini game for velocity practice',
+      questions: [
+        {
+          id: 'g1',
+          question: 'Which speed is fastest?',
+          type: 'single',
+          options: ['1 m/s', '5 m/s'],
+          correct: 1,
+        },
+      ],
+      scoring: { correctPoints: 10 },
+    };
+    const plan: EditPlan = {
+      id: 'plan_replace_interactive_html',
+      summary: 'Replace simulation with a game',
+      confidence: 0.9,
+      riskLevel: 'medium',
+      requiresConfirmation: true,
+      operations: [
+        {
+          type: 'interactive.replace_html',
+          html: `<!DOCTYPE html><html><head><title>Velocity Game</title></head><body><main id="app">Velocity game</main><script type="application/json" id="widget-config">${JSON.stringify(nextConfig)}</script><script type="module">console.log('game ready')</script></body></html>`,
+          widgetType: 'game',
+          widgetConfig: nextConfig,
+          teacherActions: [{ id: 'game_intro', type: 'speech', content: 'Play the game.' }],
+          reason: 'User requested a game component',
+        },
+      ],
+    };
+
+    const result = executeEditPlan(scene, plan);
+
+    expect(result.success).toBe(true);
+    const preview =
+      result.previewScene?.content.type === 'interactive' ? result.previewScene.content : null;
+    expect(preview?.widgetType).toBe('game');
+    expect(preview?.widgetConfig).toMatchObject({
+      type: 'game',
+      description: nextConfig.description,
+    });
+    expect(preview?.teacherActions).toEqual([
+      { id: 'game_intro', type: 'speech', content: 'Play the game.' },
+    ]);
+    expect(preview?.html).toContain('Velocity game');
+    expect(result.diffSummary?.changedItems).toContain('同步互动组件嵌入配置');
+  });
+
+  it('rejects unsafe interactive HTML replacement operations', () => {
     const scene = interactiveScene();
     const plan: EditPlan = {
       id: 'plan_bad_interactive_html',
@@ -426,16 +478,14 @@ describe('executeEditPlan', () => {
           type: 'interactive.replace_html',
           html: '<!DOCTYPE html><html><body onload="alert(1)"><script>alert(1)</script></body></html>',
           reason: 'Unsafe HTML',
-        } as unknown as EditPlan['operations'][number],
+        },
       ],
     };
 
     const result = executeEditPlan(scene, plan);
 
     expect(result.success).toBe(false);
-    expect(result.errors.join('\n')).toContain(
-      'operation type interactive.replace_html does not apply to interactive scenes',
-    );
+    expect(result.errors.join('\n')).toContain('inline event handlers are not allowed');
   });
 
   it('rejects malformed interactive widget config updates', () => {
