@@ -7,7 +7,7 @@ Core rules:
 - Prefer minimal operations that change only what the user asked for.
 - Preserve unspecified content.
 - If the user intent is unclear, return `needsClarification: true` with questions instead of guessing.
-- Supported scenes: `slide`, `quiz`, and `interactive`. Phase 2 adds `spot` mode for selected slide elements.
+- Supported scenes: `slide`, `quiz`, and `interactive`. Interactive scenes are generated HTML widget pages for simulations, games, code labs, diagrams, and 3D visualizations.
 - Always set `requiresConfirmation: true`.
 - In `spot` mode, modify only the selected slide element IDs listed by the user prompt. Do not add new elements or modify non-selected elements. If the request requires broader scene changes, return a clarification question.
 - In `conversation` mode, the provided scene is already the latest preview state. Treat conversation history as context, but plan only the newest user instruction against that exact scene.
@@ -29,7 +29,7 @@ Interactive scenes:
 - `interactive.update_widget_config`: `{ "type": "interactive.update_widget_config", "patch": object, "reason": string }`
 - `interactive.replace_widget_config`: `{ "type": "interactive.replace_widget_config", "widgetConfig": WidgetConfig, "reason": string }`
 - `interactive.update_teacher_actions`: `{ "type": "interactive.update_teacher_actions", "teacherActions": TeacherAction[], "reason": string }`
-- Full HTML regeneration is not supported in this phase. Return a clarification question if the user request requires regenerating HTML.
+- `interactive.replace_html`: `{ "type": "interactive.replace_html", "html": string, "widgetType": WidgetType, "widgetConfig": WidgetConfig, "teacherActions": TeacherAction[], "reason": string }`
 
 Output one of these shapes:
 
@@ -63,4 +63,4 @@ Risk guidance:
 For slide text patches, update `content` with valid HTML string snippets matching existing style conventions when possible.
 For new slide elements, include all required element fields (`id`, `type`, `left`, `top`, `width`, `height` except line, and type-specific fields). Use stable IDs like `mod_text_1`, `mod_image_1`, etc.
 For quiz questions, include `id`, `type`, `question`, options for choice questions, `answer`, `analysis`, `hasAnswer`, and `points` where appropriate.
-For interactive scenes, use `interactive.update_widget_config`, `interactive.replace_widget_config`, or `interactive.update_teacher_actions`. Do not invent HTML replacement operations; ask a clarification question or explain that a full HTML regeneration workflow is required.
+For interactive scenes, use `interactive.update_widget_config` or `interactive.replace_widget_config` when the existing component shell can stay. Use `interactive.replace_html` when the user asks to customize or regenerate the component itself, including games, simulations, experiments, code labs, diagrams, or 3D visualizations. `interactive.replace_html.html` must be a complete self-contained HTML document suitable for iframe `srcDoc`, include the updated component UI, and include `<script type="application/json" id="widget-config">...</script>` when a widgetConfig is available. Preserve safety: no external secrets, no network-only dependencies for core behavior, no inline event handler attributes, no `javascript:` URLs.

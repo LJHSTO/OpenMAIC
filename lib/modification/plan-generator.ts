@@ -145,9 +145,10 @@ export function summarizeSceneForModification(
         ? {
             length: content.html.length,
             hasWidgetConfig: /id=["']widget-config["']/.test(content.html),
+            prefix: content.html.slice(0, 2000),
           }
         : undefined,
-      note: 'Interactive planning supports widgetConfig and teacherActions changes. If the request requires full HTML regeneration, ask for clarification instead of generating operations.',
+      note: 'Interactive planning supports widgetConfig, teacherActions, and complete HTML replacement for generated widget pages. Use replace_html only when the user asks to redesign or regenerate the interactive component/game/experiment itself.',
     };
   }
 

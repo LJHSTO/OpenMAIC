@@ -27,6 +27,7 @@ const INTERACTIVE_OPERATION_TYPES = new Set([
   'interactive.update_widget_config',
   'interactive.replace_widget_config',
   'interactive.update_teacher_actions',
+  'interactive.replace_html',
 ]);
 
 const ELEMENT_TYPES = new Set([
@@ -45,6 +46,8 @@ const ELEMENT_TYPES = new Set([
 const QUESTION_TYPES = new Set(['single', 'multiple', 'short_answer']);
 const WIDGET_TYPES = new Set(['simulation', 'diagram', 'code', 'game', 'visualization3d']);
 const TEACHER_ACTION_TYPES = new Set(['speech', 'highlight', 'annotation', 'reveal', 'setState']);
+const SAFE_INTERACTIVE_HTML_PATTERN =
+  /^\s*(?:<!doctype\s+html[^>]*>)?\s*<html[\s>][\s\S]*<\/html>\s*$/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -210,6 +213,15 @@ function validateTeacherActions(
     }
     validateSafeStrings(action, errors, actionContext, 'action');
   });
+}
+
+function validateInteractiveHtml(html: unknown, errors: string[], context: string) {
+  if (typeof html !== 'string' || !SAFE_INTERACTIVE_HTML_PATTERN.test(html)) {
+    errors.push(`${context}: html must be a complete HTML document`);
+    return;
+  }
+  if (/\son\w+\s*=/i.test(html)) errors.push(`${context}: inline event handlers are not allowed`);
+  if (/javascript\s*:/i.test(html)) errors.push(`${context}: javascript: URLs are not allowed`);
 }
 
 function validatePlanShape(plan: EditPlan, errors: string[], warnings: string[]) {
@@ -456,6 +468,17 @@ function validateInteractiveOperation(
     }
     case 'interactive.update_teacher_actions': {
       validateTeacherActions(operation.teacherActions, errors, context);
+      break;
+    }
+    case 'interactive.replace_html': {
+      validateInteractiveHtml(operation.html, errors, context);
+      if (operation.widgetConfig) validateWidgetConfig(operation.widgetConfig, errors, context);
+      if (operation.widgetType && !WIDGET_TYPES.has(operation.widgetType)) {
+        errors.push(`${context}: unsupported widget type`);
+      }
+      if (operation.teacherActions) {
+        validateTeacherActions(operation.teacherActions, errors, context);
+      }
       break;
     }
   }

@@ -1,10 +1,25 @@
 import { createDiffSummary } from '@/lib/modification/diff-engine';
-import { replaceJsonScriptContent, sanitizeStringsDeep } from '@/lib/modification/sanitize';
+import {
+  extractJsonScriptContent,
+  replaceJsonScriptContent,
+  sanitizeStringsDeep,
+} from '@/lib/modification/sanitize';
 import { validateEditPlanForScene } from '@/lib/modification/validators';
 import type { EditPlan, ExecuteEditPlanResult } from '@/lib/types/modification';
 import type { InteractiveContent, QuizContent, Scene, SlideContent } from '@/lib/types/stage';
 import type { PPTElement } from '@/lib/types/slides';
 import type { WidgetConfig } from '@/lib/types/widgets';
+
+function parseEmbeddedWidgetConfig(html: string | undefined): WidgetConfig | undefined {
+  if (!html) return undefined;
+  const json = extractJsonScriptContent(html, 'widget-config');
+  if (!json) return undefined;
+  try {
+    return JSON.parse(json) as WidgetConfig;
+  } catch {
+    return undefined;
+  }
+}
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -149,6 +164,28 @@ function applyInteractiveOperations(scene: Scene, plan: EditPlan, appliedOperati
           ...nextContent,
           teacherActions: sanitizeStringsDeep(clone(operation.teacherActions)),
         };
+        appliedOperationIds.push(getOperationId(plan, index));
+        break;
+      }
+      case 'interactive.replace_html': {
+        const widgetConfig = operation.widgetConfig ?? parseEmbeddedWidgetConfig(operation.html);
+        const widgetType = operation.widgetType ?? widgetConfig?.type ?? nextContent.widgetType;
+        nextContent = {
+          ...nextContent,
+          html: operation.html,
+          widgetType,
+          widgetConfig,
+          teacherActions: operation.teacherActions
+            ? sanitizeStringsDeep(clone(operation.teacherActions))
+            : nextContent.teacherActions,
+        };
+        if (nextContent.widgetConfig) {
+          nextContent.html = replaceJsonScriptContent(
+            nextContent.html,
+            'widget-config',
+            nextContent.widgetConfig,
+          );
+        }
         appliedOperationIds.push(getOperationId(plan, index));
         break;
       }
