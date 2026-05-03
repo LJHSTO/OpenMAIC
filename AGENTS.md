@@ -71,9 +71,28 @@ Key env vars:
 - `lib/playback/` — state machine: `idle → playing → live`. Drives classroom timeline.
 - `lib/action/` — 28+ action types agents can execute (speech, whiteboard, slide effects, etc.).
 - `lib/store/` — Zustand stores. Central index at `lib/store/index.ts` re-exports the main stores.
+- `lib/modification/` — scene editing pipeline: plan-generator → operation-executor → diff-engine. Store uses `sessionsBySceneId` (per-page isolated sessions).
 - `lib/types/` — centralized type definitions used across the entire codebase.
 - `lib/ai/` — unified LLM provider abstraction wrapping `@ai-sdk/*` and LangChain.
+- `lib/server/` — server-only services: job store, classroom storage, SSRF guard, provider config. Never import in client components.
 - API routes under `app/api/` are server-side only. Classroom generation uses async job submission (`/api/generate-classroom/`).
+- `app/eval/` — internal evaluation harness routes, not part of the product surface.
+
+## Deprecations
+
+- `interactiveConfig` in scene outlines — use `widgetType` + `widgetOutline` instead.
+- `SlideData` type in `lib/types/slides.ts` — use `Slide`.
+- `ParsedAction` in `lib/types/chat.ts` — use `Action`.
+- Three methods in `lib/api/stage-api-element.ts` are `@deprecated` — check JSDoc before calling.
+
+## Critical gotchas
+
+- `lib/ai/thinking-context.ts` uses `node:async_hooks` — **server-only**. Never import in client components or `'use client'` files. (See comment in `lib/ai/providers.ts:40`.)
+- `discussion` action must always be **last** in a quiz scene's action array.
+- `wb_close` must **not** be called at the end of a whiteboard drawing turn — only call it when explicitly closing the board.
+- Videos never autoplay; they wait for an explicit `play_video` action.
+- Modification plans must always set `requiresConfirmation: true`.
+- `@next/next/no-img-element` ESLint rule is **off** — dynamic AI image URLs are incompatible with `next/image`.
 
 ## ESLint quirks
 
