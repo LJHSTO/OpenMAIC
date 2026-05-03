@@ -154,22 +154,6 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     icon: '/logos/claude.svg',
     models: [
       {
-        id: 'claude-opus-4-7',
-        name: 'Claude Opus 4.7',
-        contextWindow: 1000000,
-        outputWindow: 128000,
-        capabilities: {
-          streaming: true,
-          tools: true,
-          vision: true,
-          thinking: {
-            toggleable: true,
-            budgetAdjustable: true,
-            defaultEnabled: false,
-          },
-        },
-      },
-      {
         id: 'claude-opus-4-6',
         name: 'Claude Opus 4.6',
         contextWindow: 200000,

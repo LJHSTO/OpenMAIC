@@ -136,11 +136,6 @@ const anthropicBudget: ThinkingCapability = toggleBudgetCapability(
   1024,
 );
 
-const anthropicOpus47Effort: ThinkingCapability = {
-  ...anthropicAdaptiveEffort,
-  effortValues: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
-};
-
 const deepseekEffort: ThinkingCapability = {
   control: 'effort',
   requestAdapter: 'deepseek',
@@ -235,7 +230,6 @@ const THINKING_CAPABILITIES: Record<string, ThinkingCapability> = {
     'none',
   ),
 
-  [getModelMetadataKey('anthropic', 'claude-opus-4-7')]: anthropicOpus47Effort,
   [getModelMetadataKey('anthropic', 'claude-opus-4-6')]: anthropicAdaptiveEffort,
   [getModelMetadataKey('anthropic', 'claude-sonnet-4-6')]: anthropicAdaptiveEffort,
   [getModelMetadataKey('anthropic', 'claude-sonnet-4-5')]: anthropicManualEffort,
