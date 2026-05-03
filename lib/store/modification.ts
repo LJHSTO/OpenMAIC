@@ -22,12 +22,16 @@ interface StartSessionParams {
 }
 
 interface ModificationState {
-  activeSession: ModificationSession | null;
+  activeSceneId: string | null;
+  sessionsBySceneId: Record<string, ModificationSession>;
   history: ModificationHistoryEntry[];
   isPanelOpen: boolean;
   previewMode: 'split' | 'overlay';
 
-  openPanel: () => void;
+  setActiveScene: (sceneId: string | null) => void;
+  getActiveSession: () => ModificationSession | null;
+  getSessionForScene: (sceneId: string | null | undefined) => ModificationSession | null;
+  openPanel: (sceneId?: string | null) => void;
   closePanel: () => void;
   setPreviewMode: (mode: 'split' | 'overlay') => void;
   startSession: (params: StartSessionParams) => string;
@@ -93,13 +97,26 @@ function appendHistory(
   return [entry, ...history].slice(0, 50);
 }
 
+function withoutSession(sessionsBySceneId: Record<string, ModificationSession>, sceneId: string) {
+  const { [sceneId]: _removed, ...rest } = sessionsBySceneId;
+  return rest;
+}
+
 const useModificationStoreBase = create<ModificationState>()((set, get) => ({
-  activeSession: null,
+  activeSceneId: null,
+  sessionsBySceneId: {},
   history: [],
   isPanelOpen: false,
   previewMode: 'split',
 
-  openPanel: () => set({ isPanelOpen: true }),
+  setActiveScene: (activeSceneId) => set({ activeSceneId }),
+  getActiveSession: () => {
+    const sceneId = get().activeSceneId;
+    return sceneId ? (get().sessionsBySceneId[sceneId] ?? null) : null;
+  },
+  getSessionForScene: (sceneId) => (sceneId ? (get().sessionsBySceneId[sceneId] ?? null) : null),
+  openPanel: (sceneId) =>
+    set((state) => ({ isPanelOpen: true, activeSceneId: sceneId ?? state.activeSceneId })),
   closePanel: () => set({ isPanelOpen: false }),
   setPreviewMode: (previewMode) => set({ previewMode }),
 
@@ -113,94 +130,132 @@ const useModificationStoreBase = create<ModificationState>()((set, get) => ({
   }) => {
     const timestamp = now();
     const sessionId = nanoid();
-    set({
+    const session: ModificationSession = {
+      id: sessionId,
+      stageId,
+      sceneId: scene.id,
+      sceneType: scene.type,
+      mode,
+      status: 'planning',
+      userInstruction: instruction,
+      originalScene: cloneScene(scene),
+      commitBaseScene: cloneScene(commitBaseScene ?? scene),
+      conversationHistory: cloneConversationHistory(conversationHistory),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    set((state) => ({
       isPanelOpen: true,
-      activeSession: {
-        id: sessionId,
-        stageId,
-        sceneId: scene.id,
-        sceneType: scene.type,
-        mode,
-        status: 'planning',
-        userInstruction: instruction,
-        originalScene: cloneScene(scene),
-        commitBaseScene: cloneScene(commitBaseScene ?? scene),
-        conversationHistory: cloneConversationHistory(conversationHistory),
-        createdAt: timestamp,
-        updatedAt: timestamp,
+      activeSceneId: scene.id,
+      sessionsBySceneId: {
+        ...state.sessionsBySceneId,
+        [scene.id]: session,
       },
-    });
+    }));
     return sessionId;
   },
 
   setStatus: (status) => {
-    const session = get().activeSession;
+    const session = get().getActiveSession();
     if (!session) return;
-    set({ activeSession: { ...session, status, updatedAt: now() } });
+    set((state) => ({
+      sessionsBySceneId: {
+        ...state.sessionsBySceneId,
+        [session.sceneId]: { ...session, status, updatedAt: now() },
+      },
+    }));
   },
 
   setPlan: (editPlan) => {
-    const session = get().activeSession;
+    const session = get().getActiveSession();
     if (!session) return;
-    set({
-      activeSession: {
-        ...session,
-        editPlan,
-        status: 'waiting_plan_approval',
-        updatedAt: now(),
+    set((state) => ({
+      sessionsBySceneId: {
+        ...state.sessionsBySceneId,
+        [session.sceneId]: {
+          ...session,
+          editPlan,
+          status: 'waiting_plan_approval',
+          updatedAt: now(),
+        },
       },
-    });
+    }));
   },
 
   setPreview: (previewScene, diffSummary, previewBaseScene) => {
-    const session = get().activeSession;
+    const session = get().getActiveSession();
     if (!session) return;
-    const conversationHistory =
-      session.mode === 'conversation'
-        ? appendConversationTurn(session.conversationHistory, {
-            role: 'assistant',
-            content: summarizePreviewTurn(session, diffSummary),
-            createdAt: now(),
-          })
-        : session.conversationHistory;
-    set({
-      activeSession: {
-        ...session,
-        previewBaseScene: previewBaseScene ? cloneScene(previewBaseScene) : session.originalScene,
-        previewScene: cloneScene(previewScene),
-        diffSummary,
-        conversationHistory,
-        status: 'previewing',
-        updatedAt: now(),
-      },
+    const conversationHistory = appendConversationTurn(session.conversationHistory, {
+      role: 'assistant',
+      content: summarizePreviewTurn(session, diffSummary),
+      createdAt: now(),
     });
+
+    set((state) => ({
+      sessionsBySceneId: {
+        ...state.sessionsBySceneId,
+        [session.sceneId]: {
+          ...session,
+          previewBaseScene: previewBaseScene ? cloneScene(previewBaseScene) : session.originalScene,
+          previewScene: cloneScene(previewScene),
+          diffSummary,
+          conversationHistory,
+          status: 'previewing',
+          updatedAt: now(),
+        },
+      },
+    }));
   },
 
   setError: (error) => {
-    const session = get().activeSession;
+    const session = get().getActiveSession();
     if (!session) return;
-    set({ activeSession: { ...session, status: 'error', error, updatedAt: now() } });
+    set((state) => ({
+      sessionsBySceneId: {
+        ...state.sessionsBySceneId,
+        [session.sceneId]: { ...session, status: 'error', error, updatedAt: now() },
+      },
+    }));
   },
 
   markAccepted: () => {
-    const session = get().activeSession;
+    const session = get().getActiveSession();
     if (!session) return;
-    set({
-      history: appendHistory(get().history, { ...session, status: 'committing' }, true),
-      activeSession: null,
-    });
+    set((state) => ({
+      history: appendHistory(state.history, { ...session, status: 'committing' }, true),
+      sessionsBySceneId: withoutSession(state.sessionsBySceneId, session.sceneId),
+    }));
   },
 
   rejectActiveSession: () => {
-    const session = get().activeSession;
+    const session = get().getActiveSession();
     if (!session) return;
-    set({
-      history: appendHistory(get().history, { ...session, status: 'rejected' }, false),
-      activeSession: null,
-    });
+    set((state) => ({
+      history: appendHistory(state.history, { ...session, status: 'rejected' }, false),
+      sessionsBySceneId: {
+        ...state.sessionsBySceneId,
+        [session.sceneId]: {
+          ...session,
+          status: 'rejected',
+          editPlan: undefined,
+          previewBaseScene: undefined,
+          previewScene: undefined,
+          diffSummary: undefined,
+          error: undefined,
+          updatedAt: now(),
+        },
+      },
+    }));
   },
 
-  clearActiveSession: () => set({ activeSession: null }),
+  clearActiveSession: () => {
+    const session = get().getActiveSession();
+    if (!session) return;
+    set((state) => ({
+      sessionsBySceneId: withoutSession(state.sessionsBySceneId, session.sceneId),
+    }));
+  },
   clearHistory: () => set({ history: [] }),
 }));
 
