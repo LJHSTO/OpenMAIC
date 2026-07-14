@@ -1,73 +1,68 @@
-# Courseware Guard
+# 课件自检与修复
 
-Courseware Guard checks the current OpenMAIC course without introducing a second editor or a
-second AI-editing workflow. It runs at four points:
+课件自检与修复功能用于检查当前 OpenMAIC 课程，不引入第二套编辑器，也不建立新的 AI 编辑流程。它在以下四个时机运行：
 
-1. After every generated scene, before it enters the client or server stage store.
-2. After the full course is generated, before it is marked complete.
-3. The course header, through the shield-check button beside Pro Mode and Download.
-4. Manual `.maic.zip` export, immediately before the archive is assembled.
+1. 每个场景生成后、写入客户端或服务端课堂状态之前。
+2. 全部课程生成后、将生成任务标记为完成之前。
+3. 用户通过课程页头部、Pro Mode 和下载按钮旁的盾牌检查按钮手动触发时。
+4. 手动导出 `.maic.zip` 时、开始组装归档文件之前。
 
-Finalization persists a renderable draft, opens every slide in a real Playwright browser at
-1600x900, waits for fonts and images, captures a screenshot, and measures text overflow, canvas
-boundary violations, significant content overlap, failed images, console errors, and failed
-requests. A layout failure is sent once through the existing Pro Mode `regenerate_scene` backend
-with a constrained repair instruction, then rendered and checked again. Remaining critical issues
-block completion and archive creation.
+最终检查会先保存一份可渲染的课堂草稿，再使用真实 Playwright 浏览器以 `1600x900` 分辨率逐页打开幻灯片。检查过程会等待字体和图片加载完成、截取页面截图，并检测文字溢出、元素越界、明显的内容重叠、图片加载失败、浏览器控制台错误和网络请求失败。
 
-## User workflow
+如果发现布局错误，系统会将对应幻灯片和受约束的修复指令交给现有 Pro Mode 的 `regenerate_scene` 后端处理一次，随后重新渲染、截图并复检。复检后仍存在严重问题时，系统会阻止生成任务完成和归档文件创建。
 
-1. Open a generated or imported course.
-2. Select the shield-check button in the course header.
-3. Apply safe fixes when the report offers them.
-4. For remaining content issues, select **Edit in Pro Mode**. OpenMAIC navigates to the affected
-   scene and uses the existing Pro Mode editor.
-5. Reopen Courseware Guard. When critical issues reach zero, download the `.maic.zip` directly
-   from the dialog.
+## 用户操作流程
 
-After a successful final check, OpenMAIC automatically writes a `.maic.zip` whose filename contains
-the course title, model, and UTC timestamp. Configure the destination with
-`OPENMAIC_COURSEWARE_OUTPUT_DIR`; the default is `data/courseware-output`. Browser-generated media
-is uploaded from IndexedDB before visual inspection so the screenshots and archive include the
-actual images, videos, posters, and audio.
+1. 打开已经生成或导入的课程。
+2. 点击课程页头部的盾牌检查按钮。
+3. 如果报告提供安全修复，点击应用安全修复。
+4. 对其余内容问题点击“在 Pro Mode 中编辑”。OpenMAIC 会跳转到受影响的场景，并继续使用现有 Pro Mode 编辑器。
+5. 修改后重新打开课件检查。严重问题归零后，可直接从对话框下载 `.maic.zip`。
 
-The archive includes `manifest.json`, `classroom.json`, `courseware-guard-report.json`,
-`courseware-visual-report.json`, `screenshots/`, `media/`, and `audio/` when those resources exist.
-Failed visual runs keep their reports and screenshots under `data/courseware-audits/<classroomId>`.
+最终检查成功后，OpenMAIC 会自动写出一个文件名包含课程标题、模型和 UTC 时间的 `.maic.zip`。通过 `OPENMAIC_COURSEWARE_OUTPUT_DIR` 配置输出目录；默认目录为 `data/courseware-output`。
 
-## Repair policy
+浏览器生成的媒体会在视觉检查前从 IndexedDB 上传，因此截图和归档中会包含实际使用的图片、视频、视频封面和音频。
 
-Safe fixes are deterministic and idempotent:
+资源存在时，归档文件包含以下内容：
 
-- missing or duplicate scene, slide-element, and quiz-question IDs;
-- incorrect scene-to-stage links;
-- invalid or duplicate scene order values;
-- missing course or scene titles;
-- scene/content discriminator mismatches when the content discriminator is valid;
-- missing HTML doctype declarations.
+- `manifest.json`：可重新导入 OpenMAIC 的课堂清单。
+- `classroom.json`：完整课堂数据。
+- `courseware-guard-report.json`：结构自检报告。
+- `courseware-visual-report.json`：浏览器视觉检查报告。
+- `screenshots/`：逐页检查截图。
+- `media/`：图片、视频和视频封面。
+- `audio/`：课程音频。
 
-Deterministic safe fixes never rewrite:
+视觉检查失败时，报告和截图会保留在 `data/courseware-audits/<classroomId>` 下，便于定位和复核问题。
 
-- quiz answer semantics;
-- mathematical or instructional content;
-- slide prose or narration;
-- invalid slide geometry whose intended value is unknown;
-- unsafe or incomplete interactive logic;
-- PBL project content.
+## 修复策略
 
-Final visual repair may regenerate an affected slide once through the existing
-`regenerate_scene` tool. It is instructed to preserve meaning, language, style, and media. This is
-the same backend used by Pro Mode, not a parallel editor. If the repaired render still has a
-critical issue, the course remains paused for explicit Pro Mode review.
+安全修复是确定性的，并且可以重复执行而不改变正确结果。系统会自动修复：
 
-## Module interface
+- 缺失或重复的场景 ID、幻灯片元素 ID 和测验题目 ID。
+- 错误的场景与课堂关联。
+- 无效或重复的场景顺序。
+- 缺失的课程标题或场景标题。
+- 在内容类型有效时出现的场景类型与内容类型不一致。
+- 缺失的 HTML doctype 声明。
+
+确定性安全修复绝不会自动改写：
+
+- 测验答案的语义。
+- 数学内容或教学内容。
+- 幻灯片正文或讲解音频文本。
+- 无法确定原始意图的幻灯片几何数据。
+- 不安全或不完整的交互逻辑。
+- PBL 项目内容。
+
+最终视觉修复可以通过现有 `regenerate_scene` 工具对受影响的幻灯片重新生成一次。修复指令要求保留原有教学含义、语言、视觉风格和媒体资源。这与 Pro Mode 使用的是同一后端，并非并行实现的另一套编辑器。如果修复后的渲染结果仍有严重问题，课程会保持暂停状态，等待用户在 Pro Mode 中明确检查和处理。
+
+## 模块接口
 
 ```ts
 guardCourseware(bundle, { mode: 'inspect' | 'safe-fix' })
 ```
 
-The module returns a copied bundle and a report containing fingerprints, remaining issues,
-applied repairs, severity counts, and the `publishable` decision. Callers do not need to know the
-individual validators or repair ordering.
+模块返回课堂数据副本和检查报告。报告包含数据指纹、剩余问题、已执行修复、各严重级别数量，以及是否允许发布的 `publishable` 结论。调用方不需要了解各个检查器或修复步骤的执行顺序。
 
-Source: `lib/courseware-guard/index.ts`
+源文件：`lib/courseware-guard/index.ts`
