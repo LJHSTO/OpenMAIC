@@ -127,6 +127,7 @@ export const LLM_STAGES = [
   'pbl-v2-runtime:simulator',
   'chat-adapter',
   'generate-classroom',
+  'courseware-vision-audit',
   'web-search-query-rewrite',
   'maic-agent',
 ] as const;

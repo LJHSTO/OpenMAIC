@@ -14,10 +14,13 @@ export interface VisualAuditIssue {
     | 'image_failed'
     | 'text_overflow'
     | 'element_out_of_bounds'
-    | 'content_overlap';
+    | 'content_overlap'
+    | 'vision_issue'
+    | 'vision_review_failed';
   severity: VisualAuditSeverity;
   sceneId: string;
   elementIds?: string[];
+  category?: string;
   message: string;
 }
 
@@ -45,6 +48,15 @@ export interface RunVisualAuditOptions {
   scenes: Scene[];
   screenshotsDir: string;
   timeoutMs?: number;
+  visionReviewConcurrency?: number;
+  reviewScreenshot?: (input: { scene: Scene; screenshotPath: string }) => Promise<
+    Array<{
+      severity: VisualAuditSeverity;
+      category: string;
+      message: string;
+      elementIds?: string[];
+    }>
+  >;
 }
 
 const VIEWPORT = { width: 1600, height: 900 } as const;
@@ -80,6 +92,17 @@ export async function runCoursewareVisualAudit(
     ]);
   }
   const slides: VisualAuditSlideResult[] = [];
+  const reviewTasks: Array<{
+    scene: Scene;
+    screenshotPath: string;
+    addIssue: (
+      code: VisualAuditIssue['code'],
+      severity: VisualAuditSeverity,
+      message: string,
+      elementIds?: string[],
+      category?: string,
+    ) => void;
+  }> = [];
   let nextIssueId = 1;
 
   try {
@@ -108,6 +131,7 @@ export async function runCoursewareVisualAudit(
         severity: VisualAuditSeverity,
         message: string,
         elementIds?: string[],
+        category?: string,
       ) => {
         issues.push({
           id: `visual-${String(nextIssueId).padStart(4, '0')}`,
@@ -115,6 +139,7 @@ export async function runCoursewareVisualAudit(
           severity,
           sceneId: scene.id,
           ...(elementIds?.length ? { elementIds } : {}),
+          ...(category ? { category } : {}),
           message,
         });
         nextIssueId += 1;
@@ -262,6 +287,9 @@ export async function runCoursewareVisualAudit(
         }
 
         await surface.screenshot({ path: screenshotPath, animations: 'disabled' });
+        if (options.reviewScreenshot) {
+          reviewTasks.push({ scene, screenshotPath, addIssue });
+        }
       } catch (error) {
         addIssue(
           'render_failed',
@@ -282,6 +310,43 @@ export async function runCoursewareVisualAudit(
   } finally {
     await context.close();
     await browser.close();
+  }
+
+  if (options.reviewScreenshot && reviewTasks.length > 0) {
+    let cursor = 0;
+    const workerCount = Math.max(
+      1,
+      Math.min(options.visionReviewConcurrency ?? 2, reviewTasks.length),
+    );
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (cursor < reviewTasks.length) {
+          const task = reviewTasks[cursor];
+          cursor += 1;
+          try {
+            const findings = await options.reviewScreenshot!({
+              scene: task.scene,
+              screenshotPath: task.screenshotPath,
+            });
+            for (const finding of findings) {
+              task.addIssue(
+                'vision_issue',
+                finding.severity,
+                finding.message,
+                finding.elementIds,
+                finding.category,
+              );
+            }
+          } catch (error) {
+            task.addIssue(
+              'vision_review_failed',
+              'critical',
+              `Multimodal review failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+      }),
+    );
   }
 
   const issues = slides.flatMap((slide) => slide.issues);

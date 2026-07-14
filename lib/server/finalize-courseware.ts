@@ -7,10 +7,19 @@ import {
 } from '@/lib/courseware-guard/archive';
 import {
   runCoursewareVisualAudit,
+  type RunVisualAuditOptions,
   type CoursewareVisualAuditReport,
 } from '@/lib/courseware-guard/visual-audit';
 import { persistClassroom } from '@/lib/server/classroom-storage';
 import type { Scene, Stage } from '@/lib/types/stage';
+
+const AI_REPAIRABLE_SLIDE_STRUCTURE_CODES = new Set([
+  'slide_canvas_invalid',
+  'slide_element_invalid',
+  'slide_element_geometry_invalid',
+  'slide_viewport_invalid',
+  'slide_element_size_invalid',
+]);
 
 export type CoursewareFinalizationPhase =
   | 'validating'
@@ -25,6 +34,7 @@ export interface FinalizeCoursewareOptions {
   model: string;
   baseUrl: string;
   repairScene?: (scene: Scene, instruction: string) => Promise<Scene | null>;
+  reviewScreenshot?: RunVisualAuditOptions['reviewScreenshot'];
   onPhase?: (phase: CoursewareFinalizationPhase, message: string) => void | Promise<void>;
 }
 
@@ -45,6 +55,8 @@ export class CoursewareValidationError extends Error {
     readonly guardReport: CoursewareGuardReport,
     readonly visualReport: CoursewareVisualAuditReport,
     readonly evidenceDir: string,
+    readonly stage: Stage,
+    readonly scenes: Scene[],
   ) {
     super(message);
     this.name = 'CoursewareValidationError';
@@ -84,6 +96,7 @@ export async function finalizeCourseware(
     classroomId: guarded.bundle.stage.id,
     scenes: guarded.bundle.scenes,
     screenshotsDir,
+    reviewScreenshot: options.reviewScreenshot,
   });
   await fs.mkdir(evidenceDir, { recursive: true });
   await fs.writeFile(
@@ -92,15 +105,24 @@ export async function finalizeCourseware(
     'utf-8',
   );
 
-  const repairableSceneIds = new Set(
-    visualReport.issues
+  const structuralRepairIssues = guarded.report.issues.filter(
+    (issue) =>
+      issue.severity === 'critical' &&
+      !!issue.sceneId &&
+      AI_REPAIRABLE_SLIDE_STRUCTURE_CODES.has(issue.code),
+  );
+  const repairableSceneIds = new Set([
+    ...structuralRepairIssues.map((issue) => issue.sceneId as string),
+    ...visualReport.issues
       .filter(
         (issue) =>
           issue.severity === 'critical' &&
-          (issue.code === 'text_overflow' || issue.code === 'content_overlap'),
+          (issue.code === 'text_overflow' ||
+            issue.code === 'content_overlap' ||
+            issue.code === 'vision_issue'),
       )
       .map((issue) => issue.sceneId),
-  );
+  ]);
   if (options.repairScene && repairableSceneIds.size > 0) {
     await options.onPhase?.(
       'repairing',
@@ -113,12 +135,16 @@ export async function finalizeCourseware(
       const sceneIndex = repairedScenes.findIndex((scene) => scene.id === sceneId);
       if (sceneIndex < 0) continue;
       const sceneIssues = visualReport.issues.filter((issue) => issue.sceneId === sceneId);
-      const issueSummary = sceneIssues
-        .map(
+      const structuralSceneIssues = structuralRepairIssues.filter(
+        (issue) => issue.sceneId === sceneId,
+      );
+      const issueSummary = [
+        ...structuralSceneIssues.map((issue) => `${issue.code}: ${issue.path}`),
+        ...sceneIssues.map(
           (issue) =>
-            `${issue.code}${issue.elementIds?.length ? ` (${issue.elementIds.join(', ')})` : ''}: ${issue.message}`,
-        )
-        .join('\n');
+            `${issue.code}${issue.category ? ` [${issue.category}]` : ''}${issue.elementIds?.length ? ` (${issue.elementIds.join(', ')})` : ''}: ${issue.message}`,
+        ),
+      ].join('\n');
       try {
         const repaired = await options.repairScene(
           repairedScenes[sceneIndex],
@@ -166,6 +192,7 @@ export async function finalizeCourseware(
         classroomId: guarded.bundle.stage.id,
         scenes: guarded.bundle.scenes,
         screenshotsDir,
+        reviewScreenshot: options.reviewScreenshot,
       });
     }
   }
@@ -189,6 +216,8 @@ export async function finalizeCourseware(
       guarded.report,
       visualReport,
       evidenceDir,
+      guarded.bundle.stage,
+      guarded.bundle.scenes,
     );
   }
 

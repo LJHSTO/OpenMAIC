@@ -1679,7 +1679,7 @@
   },
   "coursewareGuard": {
     "title": "Courseware check",
-    "description": "Check the current course, apply deterministic safe fixes, then use Pro Mode for content decisions.",
+    "description": "Review rule findings, run the full screenshot and vision auto-repair, or open a specific page in Pro Mode.",
     "critical": "Critical",
     "warning": "Warning",
     "info": "Info",
@@ -1693,6 +1693,12 @@
     "downloadCourseware": "Download MAIC courseware",
     "noCourse": "Open a course before running the check.",
     "editInProMode": "Edit in Pro Mode",
+    "fullAuditRepair": "Full audit and auto-repair",
+    "fullAuditRunning": "Capturing slides, running vision review, and repairing...",
+    "fullAuditSuccess": "Full audit and auto-repair passed",
+    "fullAuditFailed": "Full audit or auto-repair did not pass",
+    "visualFindings": "Browser and multimodal visual findings",
+    "noVisualIssues": "No visual issues found.",
     "exportBlocked": "Download blocked: {{count}} critical issue(s) still require editing.",
     "exportRepaired": "Applied {{count}} safe repair(s) to the downloaded courseware.",
     "issues": {

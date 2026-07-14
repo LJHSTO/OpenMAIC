@@ -38,11 +38,14 @@ import type { CoursewareVisualAuditReport } from '@/lib/courseware-guard/visual-
 import type { CoursewareArchiveResult } from '@/lib/courseware-guard/archive';
 import { finalizeCourseware } from '@/lib/server/finalize-courseware';
 import { repairCoursewareScene } from '@/lib/server/repair-courseware-scene';
+import { reviewCoursewareScreenshot } from '@/lib/server/courseware-vision-review';
 
 const log = createLogger('Classroom');
 
 export interface GenerateClassroomInput {
   requirement: string;
+  /** Optional exact course title used for classroom and archive naming. */
+  title?: string;
   /** Optional per-job model (`provider:model`). Falls back to DEFAULT_MODEL. */
   model?: string;
   pdfContent?: { text: string; images: string[] };
@@ -53,6 +56,8 @@ export interface GenerateClassroomInput {
   enableImageGeneration?: boolean;
   enableVideoGeneration?: boolean;
   enableTTS?: boolean;
+  /** Send rendered slide screenshots to a vision-capable LLM during final audit. */
+  enableVisionAudit?: boolean;
   agentMode?: 'default' | 'generate';
 }
 
@@ -393,7 +398,7 @@ export async function generateClassroom(
   const stageId = nanoid(10);
   const stage: Stage = {
     id: stageId,
-    name: courseTitle || outlines[0]?.title || requirement.slice(0, 50),
+    name: input.title?.trim() || courseTitle || outlines[0]?.title || requirement.slice(0, 50),
     description: undefined,
     languageDirective,
     videoManifest: buildVideoManifestFromOutlines(outlines),
@@ -568,11 +573,44 @@ export async function generateClassroom(
     }
   }
 
+  let visionModel: Awaited<ReturnType<typeof resolveModel>> | undefined;
+  const reviewScreenshot = input.enableVisionAudit
+    ? async (reviewInput: { scene: Scene; screenshotPath: string }) => {
+        visionModel ??= await resolveModel({
+          stage: 'courseware-vision-audit',
+          modelString: input.model,
+        });
+        if (visionModel.modelInfo?.capabilities?.vision !== true) {
+          throw new Error(
+            `Model ${visionModel.modelString} is not configured as vision-capable. Configure MODEL_ROUTES.courseware-vision-audit with a vision model or set enableVisionAudit to false.`,
+          );
+        }
+        return reviewCoursewareScreenshot({
+          ...reviewInput,
+          callVisionModel: async (systemPrompt, userContent) => {
+            const result = await callLLM(
+              {
+                model: visionModel!.model,
+                system: systemPrompt,
+                messages: [{ role: 'user', content: userContent }],
+                maxOutputTokens: Math.min(visionModel!.modelInfo?.outputWindow ?? 4096, 4096),
+              },
+              'courseware-vision-audit',
+              undefined,
+              visionModel!.thinkingConfig,
+            );
+            return result.text;
+          },
+        });
+      }
+    : undefined;
+
   const finalized = await finalizeCourseware({
     stage,
     scenes,
     model: modelString,
     baseUrl: options.baseUrl,
+    reviewScreenshot,
     repairScene: async (scene, instruction) => {
       const repaired = await repairCoursewareScene({
         stage,

@@ -32,6 +32,7 @@ async function postExtractDocument(input: {
   providerId?: string;
   apiKey?: string;
   baseUrl?: string;
+  pageRange?: string;
 }) {
   const { POST } = await import('@/app/api/extract-document/route');
   const formData = new FormData();
@@ -39,6 +40,7 @@ async function postExtractDocument(input: {
   if (input.providerId) formData.append('providerId', input.providerId);
   if (input.apiKey) formData.append('apiKey', input.apiKey);
   if (input.baseUrl) formData.append('baseUrl', input.baseUrl);
+  if (input.pageRange) formData.append('pageRange', input.pageRange);
 
   const request = new Request('http://localhost/api/extract-document', {
     method: 'POST',
@@ -182,6 +184,49 @@ describe('POST /api/extract-document', () => {
       expect.any(Buffer),
       'lesson.pdf',
     );
+  });
+
+  it('applies a requested PDF page range to text and page metadata', async () => {
+    mocks.parseWithMinerUCloud.mockResolvedValueOnce({
+      text: 'all pages',
+      images: [],
+      metadata: {
+        pageCount: 3,
+        parser: 'mineru-cloud',
+        pageTexts: ['page one', 'page two', 'page three'],
+      },
+    });
+    const res = await postExtractDocument({
+      file: new File(['%PDF-1.4'], 'lesson.pdf', { type: 'application/pdf' }),
+      providerId: 'mineru-cloud',
+      apiKey: 'cloud-key',
+      pageRange: '1,3',
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.text).toContain('Source page 1');
+    expect(json.data.text).toContain('Source page 3');
+    expect(json.data.metadata).toMatchObject({
+      pageCount: 2,
+      sourcePageCount: 3,
+      pageRange: '1,3',
+      selectedPages: [1, 3],
+    });
+  });
+
+  it('rejects PDF page ranges when the provider has no page-level text', async () => {
+    const res = await postExtractDocument({
+      file: new File(['%PDF-1.4'], 'lesson.pdf', { type: 'application/pdf' }),
+      providerId: 'mineru-cloud',
+      apiKey: 'cloud-key',
+      pageRange: '1',
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json).toMatchObject({ success: false, errorCode: 'INVALID_REQUEST' });
+    expect(json.error).toContain('did not return page-level text');
   });
 
   it('falls back to MinerU Cloud for DOCX when self-hosted MinerU is unavailable and a cloud key is provided', async () => {

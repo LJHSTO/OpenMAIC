@@ -9,6 +9,7 @@ import type { LlmStage } from '@/lib/server/model-routes';
 import { callLLM } from '@/lib/ai/llm';
 import { repairCoursewareScene } from '@/lib/server/repair-courseware-scene';
 import { generateTTSForClassroom } from '@/lib/server/classroom-media-generation';
+import { reviewCoursewareScreenshot } from '@/lib/server/courseware-vision-review';
 
 const log = createLogger('CoursewareFinalize API');
 
@@ -21,6 +22,7 @@ interface FinalizeRequestBody {
   model?: string;
   outlines?: SceneOutline[];
   enableTTS?: boolean;
+  enableVisionAudit?: boolean;
 }
 
 function hasMissingSpeechAudio(scene: Scene): boolean {
@@ -68,11 +70,48 @@ export async function POST(request: NextRequest) {
       return response.text;
     };
 
+    const reviewScreenshot = body.enableVisionAudit
+      ? async (input: { scene: Scene; screenshotPath: string }) => {
+          let resolved = stageCache.get('courseware-vision-audit');
+          if (!resolved) {
+            resolved = await resolveModelFromRequest(
+              request,
+              body as FinalizeRequestBody & Record<string, unknown>,
+              'courseware-vision-audit',
+            );
+            stageCache.set('courseware-vision-audit', resolved);
+          }
+          if (resolved.modelInfo?.capabilities?.vision !== true) {
+            throw new Error(
+              `Model ${resolved.modelString} is not configured as vision-capable. Configure MODEL_ROUTES.courseware-vision-audit with a vision model or disable multimodal audit.`,
+            );
+          }
+          return reviewCoursewareScreenshot({
+            ...input,
+            callVisionModel: async (systemPrompt, userContent) => {
+              const response = await callLLM(
+                {
+                  model: resolved!.model,
+                  system: systemPrompt,
+                  messages: [{ role: 'user', content: userContent }],
+                  maxOutputTokens: Math.min(resolved!.modelInfo?.outputWindow ?? 4096, 4096),
+                },
+                'courseware-vision-audit',
+                undefined,
+                resolved!.thinkingConfig,
+              );
+              return response.text;
+            },
+          });
+        }
+      : undefined;
+
     const finalized = await finalizeCourseware({
       stage: body.stage,
       scenes: body.scenes,
       model: body.model?.trim() || 'unknown-model',
       baseUrl: buildRequestOrigin(request),
+      reviewScreenshot,
       repairScene: async (scene, instruction) => {
         const repaired = await repairCoursewareScene({
           stage: body.stage!,
@@ -109,6 +148,8 @@ export async function POST(request: NextRequest) {
           guardReport: error.guardReport,
           visualReport: error.visualReport,
           evidenceDir: error.evidenceDir,
+          stage: error.stage,
+          scenes: error.scenes,
         },
         { status: 422 },
       );

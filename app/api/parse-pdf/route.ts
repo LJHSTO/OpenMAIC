@@ -10,6 +10,7 @@ import { documentArtifactToParsedPdfContent, extractDocument } from '@/lib/docum
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
+import { PageRangeError, selectParsedPdfPages } from '@/lib/document/page-range';
 const log = createLogger('Parse PDF');
 
 export async function POST(req: NextRequest) {
@@ -31,6 +32,7 @@ export async function POST(req: NextRequest) {
     const providerId = formData.get('providerId') as PDFProviderId | null;
     const apiKey = formData.get('apiKey') as string | null;
     const baseUrl = formData.get('baseUrl') as string | null;
+    const pageRange = (formData.get('pageRange') as string | null)?.trim();
 
     if (!pdfFile) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'No PDF file provided');
@@ -82,12 +84,19 @@ export async function POST(req: NextRequest) {
       },
     };
 
-    return apiSuccess({ data: resultWithMetadata });
+    const selectedResult = pageRange
+      ? selectParsedPdfPages(resultWithMetadata, pageRange)
+      : resultWithMetadata;
+    return apiSuccess({ data: selectedResult });
   } catch (error) {
     log.error(
       `PDF parsing failed [provider=${resolvedProviderId ?? 'unknown'}, file="${pdfFileName ?? 'unknown'}"]:`,
       error,
     );
-    return apiError('PARSE_FAILED', 500, error instanceof Error ? error.message : 'Unknown error');
+    return apiError(
+      error instanceof PageRangeError ? 'INVALID_REQUEST' : 'PARSE_FAILED',
+      error instanceof PageRangeError ? 400 : 500,
+      error instanceof Error ? error.message : 'Unknown error',
+    );
   }
 }

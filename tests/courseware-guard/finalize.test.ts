@@ -119,4 +119,98 @@ describe('finalizeCourseware visual repair loop', () => {
     expect(mocks.createCoursewareArchive).toHaveBeenCalledOnce();
     expect(result.scenes[0].title).toBe('Repaired slide');
   });
+
+  it('repairs structurally invalid imported slides even when browser rendering cannot classify the layout', async () => {
+    const invalidScene = {
+      ...scene,
+      content: {
+        ...scene.content,
+        canvas: {
+          ...scene.content.canvas,
+          elements: [
+            {
+              id: 'broken-text',
+              type: 'text' as const,
+              left: 100,
+              top: 100,
+              width: 500,
+              height: 'invalid',
+              rotate: 0,
+              content: '<p>Broken imported text</p>',
+              defaultFontName: 'Arial',
+              defaultColor: '#111111',
+            },
+          ],
+        },
+      },
+    };
+    const repairedScene = {
+      ...invalidScene,
+      content: {
+        ...invalidScene.content,
+        canvas: {
+          ...invalidScene.content.canvas,
+          elements: [{ ...invalidScene.content.canvas.elements[0], height: 100 }],
+        },
+      },
+    };
+    mocks.persistClassroom.mockResolvedValue({
+      id: stage.id,
+      url: `http://localhost/classroom/${stage.id}`,
+      createdAt: '2026-07-15T00:00:00.000Z',
+    });
+    mocks.runCoursewareVisualAudit
+      .mockResolvedValueOnce({
+        schemaVersion: 'openmaic-courseware-visual-audit-v1',
+        generatedAt: '2026-07-15T00:00:00.000Z',
+        classroomId: stage.id,
+        viewport: { width: 1600, height: 900 },
+        publishable: false,
+        counts: { critical: 1, warning: 0 },
+        slides: [],
+        issues: [
+          {
+            id: 'visual-0001',
+            code: 'render_failed',
+            severity: 'critical',
+            sceneId: scene.id,
+            message: 'The invalid geometry prevented a reliable render',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openmaic-courseware-visual-audit-v1',
+        generatedAt: '2026-07-15T00:01:00.000Z',
+        classroomId: stage.id,
+        viewport: { width: 1600, height: 900 },
+        publishable: true,
+        counts: { critical: 0, warning: 0 },
+        slides: [],
+        issues: [],
+      });
+    mocks.createCoursewareArchive.mockResolvedValue({
+      path: 'D:\\output\\repair.maic.zip',
+      filename: 'repair.maic.zip',
+      outputDir: 'D:\\output',
+      size: 100,
+    });
+    const repairScene = vi.fn(async (_current, instruction: string) => {
+      expect(instruction).toContain('slide_element_geometry_invalid');
+      expect(instruction).toContain('elements[0].height');
+      return repairedScene as never;
+    });
+    const { finalizeCourseware } = await import('@/lib/server/finalize-courseware');
+
+    const result = await finalizeCourseware({
+      stage,
+      scenes: [invalidScene as never],
+      model: 'test:model',
+      baseUrl: 'http://localhost',
+      repairScene,
+    });
+
+    expect(repairScene).toHaveBeenCalledOnce();
+    expect(mocks.runCoursewareVisualAudit).toHaveBeenCalledTimes(2);
+    expect(result.guardReport.publishable).toBe(true);
+  });
 });

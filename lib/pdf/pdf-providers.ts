@@ -253,9 +253,10 @@ async function parseWithUnpdf(pdfBuffer: Buffer): Promise<ParsedPdfContent> {
   const numPages = pdf.numPages;
 
   // Extract text using the document proxy
-  const { text: pdfText } = await extractText(pdf, {
-    mergePages: true,
+  const { text: pageTexts } = await extractText(pdf, {
+    mergePages: false,
   });
+  const pdfText = pageTexts.join('\n\n');
 
   // Extract images using the same document proxy
   const images: string[] = [];
@@ -312,6 +313,7 @@ async function parseWithUnpdf(pdfBuffer: Buffer): Promise<ParsedPdfContent> {
     metadata: {
       pageCount: numPages,
       parser: 'unpdf',
+      pageTexts,
       imageMapping: Object.fromEntries(pdfImagesMeta.map((m) => [m.id, m.src])),
       pdfImages: pdfImagesMeta,
     },

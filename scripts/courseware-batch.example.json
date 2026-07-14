@@ -1,22 +1,31 @@
 {
   "baseUrl": "http://127.0.0.1:3000",
+  "paths": {
+    "promptsDir": "batch/prompts",
+    "pdfDir": "batch/pdfs"
+  },
   "defaults": {
     "model": "openai:gpt-5.5",
+    "pdfProviderId": "unpdf",
     "enableWebSearch": false,
     "enableImageGeneration": false,
     "enableVideoGeneration": false,
     "enableTTS": false,
+    "enableVisionAudit": true,
     "agentMode": "default"
   },
   "courses": [
     {
       "title": "函数极限入门",
-      "requirement": "面向大学一年级学生生成一门函数极限入门课程，包含概念讲解、直观例子和随堂测验，使用简体中文。"
+      "requirement": "面向大学一年级学生生成一门函数极限入门课程，包含概念讲解、直观例子和随堂测验，使用简体中文。",
+      "pdfs": []
     },
     {
       "title": "Python 循环",
       "model": "deepseek:deepseek-v4-pro",
-      "requirement": "面向零基础学习者讲解 Python for 循环，包含代码示例、常见错误和练习，使用简体中文。"
+      "enableVisionAudit": false,
+      "requirement": "面向零基础学习者讲解 Python for 循环，包含代码示例、常见错误和练习，使用简体中文。",
+      "pdfs": []
     }
   ]
 }

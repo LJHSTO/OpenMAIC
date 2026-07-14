@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
     requirementSnippet = rawBody.requirement?.substring(0, 60);
     const body: GenerateClassroomInput = {
       requirement: rawBody.requirement || '',
+      ...(rawBody.title?.trim() ? { title: rawBody.title.trim() } : {}),
       ...(rawBody.model?.trim() ? { model: rawBody.model.trim() } : {}),
       ...(rawBody.pdfContent ? { pdfContent: rawBody.pdfContent } : {}),
 
@@ -32,6 +33,9 @@ export async function POST(req: NextRequest) {
         ? { enableVideoGeneration: rawBody.enableVideoGeneration }
         : {}),
       ...(rawBody.enableTTS != null ? { enableTTS: rawBody.enableTTS } : {}),
+      ...(rawBody.enableVisionAudit != null
+        ? { enableVisionAudit: rawBody.enableVisionAudit }
+        : {}),
       ...(rawBody.agentMode ? { agentMode: rawBody.agentMode } : {}),
     };
     const { requirement } = body;

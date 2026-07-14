@@ -24,6 +24,7 @@ export function extractMinerUResult(fileResult: Record<string, unknown>): Parsed
 
   // Parse content_list to build image metadata lookup (img_path → metadata)
   const imageMetaLookup = new Map<string, { pageIdx: number; bbox: number[]; caption?: string }>();
+  const pageTextParts = new Map<number, string[]>();
   let contentList: unknown;
   try {
     contentList =
@@ -34,25 +35,42 @@ export function extractMinerUResult(fileResult: Record<string, unknown>): Parsed
     log.warn('[MinerU] content_list JSON parse failed, continuing without metadata');
   }
   if (Array.isArray(contentList)) {
-    const pages = new Set(
-      contentList
-        .map((item: Record<string, unknown>) => item.page_idx)
-        .filter((v: unknown) => v != null),
-    );
-    pageCount = pages.size;
+    const pages = contentList
+      .map((item: Record<string, unknown>) => item.page_idx)
+      .filter((value: unknown): value is number => typeof value === 'number' && value >= 0);
+    pageCount = pages.length > 0 ? Math.max(...pages) + 1 : 0;
 
-    for (const item of contentList) {
-      if (item.type === 'image' && item.img_path) {
+    for (const item of contentList as Array<Record<string, unknown>>) {
+      const pageIdx = typeof item.page_idx === 'number' ? item.page_idx : 0;
+      const textCandidates = [
+        item.text,
+        item.content,
+        item.latex,
+        item.table_body,
+        ...(Array.isArray(item.table_caption) ? item.table_caption : []),
+        ...(Array.isArray(item.image_caption) ? item.image_caption : []),
+      ];
+      const pageParts = textCandidates
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => value.trim());
+      if (pageParts.length > 0) {
+        pageTextParts.set(pageIdx, [...(pageTextParts.get(pageIdx) ?? []), ...pageParts]);
+      }
+      if (item.type === 'image' && typeof item.img_path === 'string') {
+        const imagePath = item.img_path;
         const metaEntry = {
-          pageIdx: item.page_idx ?? 0,
-          bbox: item.bbox || [0, 0, 1000, 1000],
-          caption: Array.isArray(item.image_caption) ? item.image_caption[0] : undefined,
+          pageIdx,
+          bbox: (item.bbox as number[] | undefined) || [0, 0, 1000, 1000],
+          caption:
+            Array.isArray(item.image_caption) && typeof item.image_caption[0] === 'string'
+              ? item.image_caption[0]
+              : undefined,
         };
         // Store under both the full path and basename so lookup works
         // regardless of whether images dict uses "abc.jpg" or "images/abc.jpg"
-        imageMetaLookup.set(item.img_path, metaEntry);
-        const basename = item.img_path.split('/').pop();
-        if (basename && basename !== item.img_path) {
+        imageMetaLookup.set(imagePath, metaEntry);
+        const basename = imagePath.split('/').pop();
+        if (basename && basename !== imagePath) {
           imageMetaLookup.set(basename, metaEntry);
         }
       }
@@ -98,6 +116,9 @@ export function extractMinerUResult(fileResult: Record<string, unknown>): Parsed
     metadata: {
       pageCount,
       parser: 'mineru',
+      pageTexts: Array.from({ length: pageCount }, (_, index) =>
+        (pageTextParts.get(index) ?? []).join('\n\n'),
+      ),
       imageMapping,
       pdfImages,
     },

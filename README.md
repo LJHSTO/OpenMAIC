@@ -6,6 +6,10 @@
   <img src="assets/banner.png" alt="OpenMAIC Banner" width="680"/>
 </p>
 
+> [!TIP]
+> For batch generation, PDF page ranges, screenshot QA, AI repair, and model-based archiving, see the
+> [Courseware automation guide](COURSEWARE_AUTOMATION_README.md) (Chinese).
+
 <p align="center">
   Get an immersive, multi-agent learning experience in just one click
 </p>

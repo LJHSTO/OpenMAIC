@@ -5,7 +5,6 @@ import { useStageStore } from '@/lib/store/stage';
 import { isSceneEditLocked } from '@/lib/edit/regen-lock';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { useSettingsStore } from '@/lib/store/settings';
-import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { db } from '@/lib/utils/database';
 import type {
   SceneOutline,
@@ -30,7 +29,7 @@ import {
   type GenerationRetryOptions,
 } from '@/lib/generation/generation-retry';
 import { guardGeneratedScene } from '@/lib/courseware-guard';
-import { uploadClientCoursewareResources } from '@/lib/courseware-guard/upload-client-resources';
+import { finalizeCurrentCourseware } from '@/lib/courseware-guard/finalize-client';
 
 const log = createLogger('SceneGenerator');
 
@@ -49,81 +48,6 @@ function addGuardedGeneratedScene(scene: Scene): Scene | null {
     });
   }
   return guarded.scene;
-}
-
-function preserveClientMediaReferences(originalScenes: Scene[], finalizedScenes: Scene[]): Scene[] {
-  const originalBySceneId = new Map(originalScenes.map((scene) => [scene.id, scene]));
-  return finalizedScenes.map((scene) => {
-    const original = originalBySceneId.get(scene.id);
-    if (scene.content.type !== 'slide' || original?.content.type !== 'slide') return scene;
-    const originalElements = new Map(
-      original.content.canvas.elements.map((element) => [element.id, element]),
-    );
-    const elements = scene.content.canvas.elements.map((element) => {
-      const prior = originalElements.get(element.id);
-      if (
-        (element.type !== 'image' && element.type !== 'video') ||
-        (prior?.type !== 'image' && prior?.type !== 'video') ||
-        typeof element.src !== 'string' ||
-        !element.src.includes('/api/classroom-media/')
-      )
-        return element;
-      return {
-        ...element,
-        src: prior.src,
-        ...(element.type === 'video' && prior.type === 'video' ? { poster: prior.poster } : {}),
-      };
-    });
-    return {
-      ...scene,
-      content: { ...scene.content, canvas: { ...scene.content.canvas, elements } },
-    } as Scene;
-  });
-}
-
-async function finalizeGeneratedCourseware(): Promise<void> {
-  const state = useStageStore.getState();
-  if (!state.stage || state.scenes.length === 0) {
-    throw new Error('Cannot finalize an empty classroom');
-  }
-  const failedMedia = Object.values(useMediaGenerationStore.getState().tasks).filter(
-    (task) => task.stageId === state.stage?.id && task.status === 'failed',
-  );
-  if (failedMedia.length > 0) {
-    throw new Error(`Cannot finalize: ${failedMedia.length} generated media resource(s) failed`);
-  }
-  const scenesWithResources = await uploadClientCoursewareResources(state.stage.id, state.scenes);
-  const model = getCurrentModelConfig().modelString || 'unknown-model';
-  const settings = useSettingsStore.getState();
-  const response = await fetch('/api/courseware-guard/finalize', {
-    method: 'POST',
-    headers: getApiHeaders(),
-    body: JSON.stringify(
-      withThinkingConfig({
-        stage: state.stage,
-        scenes: scenesWithResources,
-        outlines: state.outlines,
-        model,
-        enableTTS: settings.ttsEnabled && settings.ttsProviderId !== 'browser-native-tts',
-      }),
-    ),
-  });
-  const result = (await readJsonResponse(response)) as {
-    success?: boolean;
-    error?: string;
-    evidenceDir?: string;
-    stage?: typeof state.stage;
-    scenes?: Scene[];
-    archive?: { path?: string };
-  };
-  if (!response.ok || !result.success || !result.stage || !result.scenes) {
-    const evidence = result.evidenceDir ? ` Evidence: ${result.evidenceDir}` : '';
-    throw new Error(`${result.error || 'Courseware finalization failed'}.${evidence}`);
-  }
-  const finalizedScenes = preserveClientMediaReferences(state.scenes, result.scenes);
-  useStageStore.setState({ stage: result.stage, scenes: finalizedScenes });
-  await useStageStore.getState().saveToStorage();
-  log.info('Courseware finalization completed', { archivePath: result.archive?.path });
 }
 
 interface SceneContentResult {
@@ -558,7 +482,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
       if (pending.length === 0) {
         try {
           await mediaPromiseRef.current;
-          await finalizeGeneratedCourseware();
+          await finalizeCurrentCourseware({ enableVisionAudit: true });
           store.getState().setGenerationStatus('completed');
           store.getState().setGeneratingOutlines([]);
           store.getState().setGenerationComplete(true);
@@ -793,7 +717,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
           } else {
             try {
               await mediaPromiseRef.current;
-              await finalizeGeneratedCourseware();
+              await finalizeCurrentCourseware({ enableVisionAudit: true });
               store.getState().setGenerationStatus('completed');
               store.getState().setGeneratingOutlines([]);
               store.getState().setGenerationComplete(true);
@@ -962,7 +886,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
           // the orphaned outline as pending and regenerate it.
           try {
             await mediaPromiseRef.current;
-            await finalizeGeneratedCourseware();
+            await finalizeCurrentCourseware({ enableVisionAudit: true });
             store.getState().setGenerationStatus('completed');
             store.getState().setGenerationComplete(true);
             options.onComplete?.();

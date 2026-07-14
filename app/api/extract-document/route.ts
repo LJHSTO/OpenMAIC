@@ -20,6 +20,7 @@ import { normalizeDocumentMimeType, SUPPORTED_MEDIA_MIME_TYPES } from '@/lib/doc
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
+import { PageRangeError, selectParsedPdfPages } from '@/lib/document/page-range';
 
 const log = createLogger('Extract Document');
 const MAX_EXTRACT_DOCUMENT_FILE_SIZE_BYTES = 50 * 1024 * 1024;
@@ -125,6 +126,7 @@ export async function POST(req: NextRequest) {
     const baseUrl = formData.get('baseUrl') as string | null;
     const accessKeyId = formData.get('accessKeyId') as string | null;
     const accessKeySecret = formData.get('accessKeySecret') as string | null;
+    const pageRange = (formData.get('pageRange') as string | null)?.trim();
 
     if (!documentFile) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'No course material file provided');
@@ -141,6 +143,9 @@ export async function POST(req: NextRequest) {
         400,
         `Unsupported course material type for "${documentFile.name}"`,
       );
+    }
+    if (pageRange && mimeType !== 'application/pdf') {
+      return apiError('INVALID_REQUEST', 400, 'pageRange is supported only for PDF files');
     }
     if (documentFile.size > MAX_EXTRACT_DOCUMENT_FILE_SIZE_BYTES) {
       return apiError(
@@ -332,12 +337,19 @@ export async function POST(req: NextRequest) {
       },
     };
 
-    return apiSuccess({ data: resultWithMetadata });
+    const selectedResult = pageRange
+      ? selectParsedPdfPages(resultWithMetadata, pageRange)
+      : resultWithMetadata;
+    return apiSuccess({ data: selectedResult });
   } catch (error) {
     log.error(
       `Document extraction failed [provider=${resolvedProviderId ?? 'unknown'}, file="${fileName ?? 'unknown'}"]:`,
       error,
     );
-    return apiError('PARSE_FAILED', 500, error instanceof Error ? error.message : 'Unknown error');
+    return apiError(
+      error instanceof PageRangeError ? 'INVALID_REQUEST' : 'PARSE_FAILED',
+      error instanceof PageRangeError ? 400 : 500,
+      error instanceof Error ? error.message : 'Unknown error',
+    );
   }
 }

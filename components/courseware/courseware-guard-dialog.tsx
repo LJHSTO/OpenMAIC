@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -8,16 +8,26 @@ import {
   FileJson,
   Loader2,
   Pencil,
+  ScanSearch,
   ShieldCheck,
   Wrench,
   XCircle,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store';
 import { guardCourseware, type CoursewareIssue } from '@/lib/courseware-guard';
+import {
+  CoursewareFinalizationClientError,
+  finalizeCurrentCourseware,
+} from '@/lib/courseware-guard/finalize-client';
+import type {
+  CoursewareVisualAuditReport,
+  VisualAuditIssue,
+} from '@/lib/courseware-guard/visual-audit';
 import type { StageMode } from '@/lib/types/stage';
 import { cn } from '@/lib/utils';
 
@@ -76,6 +86,44 @@ function safeFileName(value: string): string {
   return value.replace(/[\\/:*?"<>|]/g, '_').trim() || 'courseware';
 }
 
+function issueLocation(
+  issue: CoursewareIssue,
+  scenes: ReturnType<typeof useStageStore.getState>['scenes'],
+) {
+  const sceneIndex = issue.sceneId ? scenes.findIndex((scene) => scene.id === issue.sceneId) : -1;
+  const scene = sceneIndex >= 0 ? scenes[sceneIndex] : undefined;
+  const elementMatch = issue.path.match(/\.elements\[(\d+)\](?:\.([^.]+))?$/);
+  let elementId: string | undefined;
+  if (scene?.content.type === 'slide' && elementMatch) {
+    const element = scene.content.canvas.elements[Number(elementMatch[1])];
+    elementId = element?.id;
+  }
+  return [
+    sceneIndex >= 0 ? String(sceneIndex + 1).padStart(2, '0') : undefined,
+    scene?.title,
+    elementId,
+    elementMatch?.[2],
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function visualIssueLocation(
+  issue: VisualAuditIssue,
+  scenes: ReturnType<typeof useStageStore.getState>['scenes'],
+) {
+  const sceneIndex = scenes.findIndex((scene) => scene.id === issue.sceneId);
+  const scene = sceneIndex >= 0 ? scenes[sceneIndex] : undefined;
+  return [
+    sceneIndex >= 0 ? String(sceneIndex + 1).padStart(2, '0') : undefined,
+    scene?.title,
+    issue.category,
+    issue.elementIds?.join(', '),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 export function CoursewareGuardDialog({
   open,
   onOpenChange,
@@ -89,12 +137,21 @@ export function CoursewareGuardDialog({
   const scenes = useStageStore((state) => state.scenes);
   const setScenes = useStageStore((state) => state.setScenes);
   const setCurrentSceneId = useStageStore((state) => state.setCurrentSceneId);
+  const [finalizing, setFinalizing] = useState(false);
+  const [lastVisualReport, setLastVisualReport] = useState<CoursewareVisualAuditReport | null>(
+    null,
+  );
 
   const result = useMemo(
     () => (stage ? guardCourseware({ stage, scenes }, { mode: 'inspect' }) : null),
     [stage, scenes],
   );
   const report = result?.report;
+  const overallCritical = (report?.counts.critical ?? 0) + (lastVisualReport?.counts.critical ?? 0);
+  const overallWarning = (report?.counts.warning ?? 0) + (lastVisualReport?.counts.warning ?? 0);
+  const overallPublishable = Boolean(
+    report?.publishable && (!lastVisualReport || lastVisualReport.publishable),
+  );
 
   const applySafeFixes = () => {
     if (!stage) return;
@@ -123,10 +180,36 @@ export function CoursewareGuardDialog({
     return key ? t(`coursewareGuard.issues.${key}`) : issue.code;
   };
 
+  const runFullAuditAndRepair = async () => {
+    setFinalizing(true);
+    setLastVisualReport(null);
+    const toastId = toast.loading(t('coursewareGuard.fullAuditRunning'));
+    try {
+      const finalized = await finalizeCurrentCourseware({ enableVisionAudit: true });
+      setLastVisualReport(finalized.visualReport);
+      toast.success(t('coursewareGuard.fullAuditSuccess'), {
+        id: toastId,
+        description: finalized.archive?.path,
+        duration: 12_000,
+      });
+    } catch (error) {
+      if (error instanceof CoursewareFinalizationClientError && error.visualReport) {
+        setLastVisualReport(error.visualReport);
+      }
+      toast.error(t('coursewareGuard.fullAuditFailed'), {
+        id: toastId,
+        description: error instanceof Error ? error.message : String(error),
+        duration: 15_000,
+      });
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[86vh] max-w-3xl flex-col gap-0 overflow-hidden p-0">
-        <div className="border-b px-6 py-5">
+      <DialogContent className="flex h-[calc(100dvh-1rem)] max-h-[800px] w-[calc(100vw-1rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:h-[calc(100dvh-2rem)]">
+        <div className="shrink-0 border-b px-6 py-5">
           <div className="flex items-start gap-3">
             <div className="grid size-10 shrink-0 place-items-center rounded-md bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
               <ShieldCheck className="size-5" />
@@ -142,15 +225,15 @@ export function CoursewareGuardDialog({
 
         {report ? (
           <>
-            <div className="grid grid-cols-2 gap-px border-b bg-border sm:grid-cols-4">
+            <div className="grid shrink-0 grid-cols-2 gap-px border-b bg-border sm:grid-cols-4">
               <SummaryCell
                 label={t('coursewareGuard.critical')}
-                value={report.counts.critical}
+                value={overallCritical}
                 tone="critical"
               />
               <SummaryCell
                 label={t('coursewareGuard.warning')}
-                value={report.counts.warning}
+                value={overallWarning}
                 tone="warning"
               />
               <SummaryCell
@@ -161,15 +244,15 @@ export function CoursewareGuardDialog({
               <SummaryCell
                 label={t('coursewareGuard.status')}
                 value={
-                  report.publishable
+                  overallPublishable
                     ? t('coursewareGuard.publishable')
                     : t('coursewareGuard.blocked')
                 }
-                tone={report.publishable ? 'ok' : 'critical'}
+                tone={overallPublishable ? 'ok' : 'critical'}
               />
             </div>
 
-            <ScrollArea className="min-h-0 flex-1">
+            <ScrollArea className="min-h-0 flex-1 basis-0 overscroll-contain">
               <div className="space-y-2 p-5">
                 {report.issues.length === 0 ? (
                   <div className="flex min-h-40 flex-col items-center justify-center text-center">
@@ -180,58 +263,124 @@ export function CoursewareGuardDialog({
                     </p>
                   </div>
                 ) : (
-                  report.issues.map((issue) => (
-                    <div
-                      key={issue.id}
-                      className="flex items-start gap-3 rounded-md border bg-background p-3"
-                    >
-                      {issue.severity === 'critical' ? (
-                        <XCircle className="mt-0.5 size-4 shrink-0 text-red-600" />
-                      ) : issue.severity === 'warning' ? (
-                        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
-                      ) : (
-                        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-sky-600" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium">{issueLabel(issue)}</p>
-                        <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
-                          {issue.path}
-                        </p>
+                  report.issues.map((issue) => {
+                    const location = issueLocation(issue, scenes);
+                    return (
+                      <div
+                        key={issue.id}
+                        className="flex flex-col gap-3 rounded-md border bg-background p-3 sm:flex-row sm:items-start"
+                      >
+                        <div className="flex min-w-0 flex-1 items-start gap-3">
+                          {issue.severity === 'critical' ? (
+                            <XCircle className="mt-0.5 size-4 shrink-0 text-red-600" />
+                          ) : issue.severity === 'warning' ? (
+                            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                          ) : (
+                            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-sky-600" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium">{issueLabel(issue)}</p>
+                            {location && (
+                              <p className="mt-1 break-words text-xs font-medium text-muted-foreground">
+                                {location}
+                              </p>
+                            )}
+                            <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                              {issue.path}
+                            </p>
+                          </div>
+                        </div>
+                        {issue.sceneId && !issue.repairable && onToggleEditMode && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full shrink-0 sm:w-auto"
+                            aria-label={`${t('coursewareGuard.editInProMode')}: ${location}`}
+                            onClick={() => openIssueInProMode(issue)}
+                          >
+                            <Pencil className="size-3.5" />
+                            {t('coursewareGuard.editInProMode')}
+                          </Button>
+                        )}
                       </div>
-                      {issue.sceneId && !issue.repairable && onToggleEditMode && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="shrink-0"
-                          onClick={() => openIssueInProMode(issue)}
-                        >
-                          <Pencil className="size-3.5" />
-                          {t('coursewareGuard.editInProMode')}
-                        </Button>
-                      )}
+                    );
+                  })
+                )}
+                {lastVisualReport && (
+                  <div className="pt-4">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <h3 className="text-sm font-semibold">
+                        {t('coursewareGuard.visualFindings')}
+                      </h3>
+                      <span className="text-xs text-muted-foreground">
+                        {lastVisualReport.issues.length}
+                      </span>
                     </div>
-                  ))
+                    {lastVisualReport.issues.length === 0 ? (
+                      <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
+                        {t('coursewareGuard.noVisualIssues')}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {lastVisualReport.issues.map((issue) => {
+                          const location = visualIssueLocation(issue, scenes);
+                          return (
+                            <div
+                              key={issue.id}
+                              className="flex items-start gap-3 rounded-md border bg-background p-3"
+                            >
+                              {issue.severity === 'critical' ? (
+                                <XCircle className="mt-0.5 size-4 shrink-0 text-red-600" />
+                              ) : (
+                                <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium">{issue.message}</p>
+                                <p className="mt-1 break-words text-xs text-muted-foreground">
+                                  {location || issue.sceneId}
+                                </p>
+                                <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                                  {issue.code}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </ScrollArea>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-muted/30 px-5 py-4">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t bg-muted/30 px-5 py-4">
               <div className="flex flex-wrap gap-2">
+                <Button onClick={runFullAuditAndRepair} disabled={finalizing || !stage}>
+                  {finalizing ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <ScanSearch className="size-4" />
+                  )}
+                  {finalizing
+                    ? t('coursewareGuard.fullAuditRunning')
+                    : t('coursewareGuard.fullAuditRepair')}
+                </Button>
                 <Button
                   variant="outline"
                   onClick={applySafeFixes}
-                  disabled={!report.issues.some((issue) => issue.repairable)}
+                  disabled={finalizing || !report.issues.some((issue) => issue.repairable)}
                 >
                   <Wrench className="size-4" />
                   {t('coursewareGuard.safeFix')}
                 </Button>
                 <Button
                   variant="outline"
+                  disabled={finalizing}
                   onClick={() =>
-                    downloadJson(
-                      `${safeFileName(stage?.name ?? 'courseware')}-guard-report.json`,
-                      report,
-                    )
+                    downloadJson(`${safeFileName(stage?.name ?? 'courseware')}-guard-report.json`, {
+                      structural: report,
+                      visual: lastVisualReport,
+                    })
                   }
                 >
                   <FileJson className="size-4" />
@@ -240,7 +389,7 @@ export function CoursewareGuardDialog({
               </div>
               <Button
                 onClick={onExportCourseware}
-                disabled={!report.publishable || exporting}
+                disabled={finalizing || !overallPublishable || exporting}
                 className="bg-emerald-700 text-white hover:bg-emerald-800"
               >
                 {exporting ? (
