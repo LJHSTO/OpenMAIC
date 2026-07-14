@@ -6,6 +6,7 @@ import JSZip from 'jszip';
 import {
   buildCoursewareArtifactFilename,
   createCoursewareArchive,
+  resolveCoursewareOutputDir,
   sanitizeArtifactSegment,
 } from '@/lib/courseware-guard/archive';
 
@@ -34,6 +35,15 @@ describe('courseware archive naming', () => {
   it('uses a bounded fallback for invalid Windows path segments', () => {
     expect(sanitizeArtifactSegment('  <>:"/\\|?*  ', 'course')).toBe('course');
     expect(sanitizeArtifactSegment('a'.repeat(120), 'course')).toHaveLength(80);
+  });
+
+  it('groups automatic output under a filesystem-safe model directory', () => {
+    expect(resolveCoursewareOutputDir('D:\\Courseware', 'openai:gpt-5.5')).toBe(
+      path.resolve('D:\\Courseware', 'openai_gpt-5.5'),
+    );
+    expect(resolveCoursewareOutputDir('D:\\Courseware', 'openai:gpt-5.5', false)).toBe(
+      path.resolve('D:\\Courseware'),
+    );
   });
 
   it('restores portable media references in the importable manifest', async () => {

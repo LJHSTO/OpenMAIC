@@ -72,18 +72,19 @@ const slideContent = {
   remark: 'Retry transient failures',
 };
 
-async function generateWithProgress() {
+async function generateWithProgress(
+  input: { requirement: string; model?: string } = {
+    requirement: 'Teach retry basics',
+  },
+) {
   const progress: Array<{ message: string }> = [];
   const { generateClassroom } = await import('@/lib/server/classroom-generation');
-  const result = await generateClassroom(
-    { requirement: 'Teach retry basics' },
-    {
-      baseUrl: 'http://localhost',
-      onProgress: (event) => {
-        progress.push({ message: event.message });
-      },
+  const result = await generateClassroom(input, {
+    baseUrl: 'http://localhost',
+    onProgress: (event) => {
+      progress.push({ message: event.message });
     },
-  );
+  });
   return { result, progress };
 }
 
@@ -187,6 +188,20 @@ describe('classroom scene generation retries', () => {
       undefined,
       thinkingConfig,
     );
+  });
+
+  it('resolves a model selected for an individual batch job', async () => {
+    mocks.generateSceneContent.mockResolvedValue(slideContent);
+
+    await generateWithProgress({
+      requirement: 'Teach retry basics',
+      model: 'openai:gpt-5.5',
+    });
+
+    expect(mocks.resolveModel).toHaveBeenCalledWith({
+      stage: 'generate-classroom',
+      modelString: 'openai:gpt-5.5',
+    });
   });
 
   it('retries retryable action generation errors', async () => {

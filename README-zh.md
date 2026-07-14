@@ -6,6 +6,10 @@
   <img src="assets/banner.png" alt="OpenMAIC Banner" width="680"/>
 </p>
 
+> [!TIP]
+> 本地批量生成课件、逐页截图自检、AI 修复和按模型归档，请阅读
+> [《OpenMAIC 本地课件批量生成、自检修复与归档说明》](COURSEWARE_AUTOMATION_README.md)。
+
 <p align="center">
   一键生成沉浸式多智能体互动课堂。
 </p>

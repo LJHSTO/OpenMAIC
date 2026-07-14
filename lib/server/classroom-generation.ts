@@ -43,6 +43,8 @@ const log = createLogger('Classroom');
 
 export interface GenerateClassroomInput {
   requirement: string;
+  /** Optional per-job model (`provider:model`). Falls back to DEFAULT_MODEL. */
+  model?: string;
   pdfContent?: { text: string; images: string[] };
   enableWebSearch?: boolean;
   webSearchProviderId?: WebSearchProviderId;
@@ -198,7 +200,7 @@ export async function generateClassroom(
     providerId,
     apiKey,
     thinkingConfig: classroomThinking,
-  } = await resolveModel({ stage: 'generate-classroom' });
+  } = await resolveModel({ stage: 'generate-classroom', modelString: input.model });
   log.info(`Using server-configured model: ${modelString}`);
 
   // Fail fast if the resolved provider has no API key configured

@@ -19,7 +19,7 @@
 4. 对其余内容问题点击“在 Pro Mode 中编辑”。OpenMAIC 会跳转到受影响的场景，并继续使用现有 Pro Mode 编辑器。
 5. 修改后重新打开课件检查。严重问题归零后，可直接从对话框下载 `.maic.zip`。
 
-最终检查成功后，OpenMAIC 会自动写出一个文件名包含课程标题、模型和 UTC 时间的 `.maic.zip`。通过 `OPENMAIC_COURSEWARE_OUTPUT_DIR` 配置输出目录；默认目录为 `data/courseware-output`。
+最终检查成功后，OpenMAIC 会自动写出一个文件名包含课程标题、模型和 UTC 时间的 `.maic.zip`。通过 `OPENMAIC_COURSEWARE_OUTPUT_DIR` 配置输出根目录；默认根目录为 `data/courseware-output`。默认情况下，系统还会按实际模型建立子目录；设置 `OPENMAIC_COURSEWARE_GROUP_BY_MODEL=false` 可以关闭模型分组。
 
 浏览器生成的媒体会在视觉检查前从 IndexedDB 上传，因此截图和归档中会包含实际使用的图片、视频、视频封面和音频。
 
@@ -34,6 +34,8 @@
 - `audio/`：课程音频。
 
 视觉检查失败时，报告和截图会保留在 `data/courseware-audits/<classroomId>` 下，便于定位和复核问题。
+
+导入的 `.maic.zip` 可以直接运行结构检查，不需要先重新生成。“定位并进入 Pro Mode”只负责打开问题所在场景，不会在点击时自动改写课件；进入 Pro Mode 后可手动编辑或使用现有 Edit with AI。批量生成和完整配置方法见项目根目录的 `COURSEWARE_AUTOMATION_README.md`。
 
 ## 修复策略
 

@@ -198,7 +198,7 @@ export function CoursewareGuardDialog({
                           {issue.path}
                         </p>
                       </div>
-                      {issue.sceneId && !issue.repairable && (
+                      {issue.sceneId && !issue.repairable && onToggleEditMode && (
                         <Button
                           size="sm"
                           variant="outline"

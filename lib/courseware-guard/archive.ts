@@ -23,6 +23,7 @@ export interface CoursewareArchiveOptions {
   visualReport: CoursewareVisualAuditReport;
   screenshotsDir: string;
   outputDir?: string;
+  groupByModel?: boolean;
 }
 
 export interface CoursewareArchiveResult {
@@ -71,10 +72,20 @@ export function buildCoursewareArtifactFilename(
   return `${sanitizeArtifactSegment(courseTitle, 'course')}__${sanitizeArtifactSegment(model, 'model')}__${timestamp}${CLASSROOM_ZIP_EXTENSION}`;
 }
 
-export function resolveCoursewareOutputDir(override?: string): string {
+export function resolveCoursewareOutputDir(
+  override?: string,
+  model?: string,
+  groupByModel?: boolean,
+): string {
   const configured = override?.trim() || process.env.OPENMAIC_COURSEWARE_OUTPUT_DIR?.trim();
-  if (!configured) return path.join(process.cwd(), 'data', 'courseware-output');
-  return path.resolve(configured);
+  const root = configured
+    ? path.resolve(configured)
+    : path.join(process.cwd(), 'data', 'courseware-output');
+  const configuredGrouping = process.env.OPENMAIC_COURSEWARE_GROUP_BY_MODEL?.trim().toLowerCase();
+  const shouldGroup =
+    groupByModel ?? (configuredGrouping !== 'false' && configuredGrouping !== '0');
+  if (!shouldGroup || !model?.trim()) return root;
+  return path.join(root, sanitizeArtifactSegment(model, 'unknown-model'));
 }
 
 async function listFilesRecursive(root: string): Promise<string[]> {
@@ -139,7 +150,11 @@ export async function createCoursewareArchive(
     throw new Error('Courseware archive blocked because validation has critical issues');
   }
 
-  const outputDir = resolveCoursewareOutputDir(options.outputDir);
+  const outputDir = resolveCoursewareOutputDir(
+    options.outputDir,
+    options.model,
+    options.groupByModel,
+  );
   await fs.mkdir(outputDir, { recursive: true });
   const filename = buildCoursewareArtifactFilename(options.stage.name, options.model);
   const outputPath = path.join(outputDir, filename);

@@ -1679,7 +1679,7 @@
   },
   "coursewareGuard": {
     "title": "课件检查",
-    "description": "检查当前课程并应用确定性安全修复；涉及内容判断的问题请使用现有 Pro Mode 修改。",
+    "description": "规则能够确定的错误可直接安全修复；其他按钮只负责定位问题页，需要进入 Pro Mode 后手动或用 AI 修改。",
     "critical": "严重问题",
     "warning": "警告",
     "info": "提示",
@@ -1692,7 +1692,7 @@
     "downloadReport": "下载检查报告",
     "downloadCourseware": "下载 MAIC 课件",
     "noCourse": "请先打开一个课程再运行检查。",
-    "editInProMode": "在 Pro Mode 修改",
+    "editInProMode": "定位并进入 Pro Mode",
     "exportBlocked": "仍有 {{count}} 个严重问题需要修改，暂不能下载。",
     "exportRepaired": "已对下载课件应用 {{count}} 项安全修复。",
     "issues": {
