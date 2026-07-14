@@ -36,6 +36,25 @@ export interface ClassroomGenerationJob {
     classroomId: string;
     url: string;
     scenesCount: number;
+    coursewareGuard: {
+      publishable: boolean;
+      changed: boolean;
+      critical: number;
+      warning: number;
+      repairs: number;
+    };
+    visualAudit: {
+      publishable: boolean;
+      critical: number;
+      warning: number;
+      screenshots: number;
+    };
+    archive: {
+      path: string;
+      filename: string;
+      outputDir: string;
+      size: number;
+    };
   };
   error?: string;
 }
@@ -206,6 +225,20 @@ export async function markClassroomGenerationJobSucceeded(
       classroomId: result.id,
       url: result.url,
       scenesCount: result.scenesCount,
+      coursewareGuard: {
+        publishable: result.guardReport.publishable,
+        changed: result.guardReport.changed,
+        critical: result.guardReport.counts.critical,
+        warning: result.guardReport.counts.warning,
+        repairs: result.guardReport.repairs.length,
+      },
+      visualAudit: {
+        publishable: result.visualReport.publishable,
+        critical: result.visualReport.counts.critical,
+        warning: result.visualReport.counts.warning,
+        screenshots: result.visualReport.slides.length,
+      },
+      archive: result.archive,
     },
   });
 }

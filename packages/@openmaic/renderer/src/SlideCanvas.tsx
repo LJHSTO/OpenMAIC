@@ -117,6 +117,7 @@ export function SlideCanvas(props: SlideCanvasProps) {
     >
       <style dangerouslySetInnerHTML={{ __html: SLIDE_RENDERER_STYLES }} />
       <div
+        data-slide-canvas-viewport=""
         style={{
           position: 'absolute',
           ...(chrome
@@ -141,6 +142,7 @@ export function SlideCanvas(props: SlideCanvasProps) {
         }}
       >
         <div
+          data-slide-canvas-content=""
           style={{
             width: '100%',
             height: '100%',

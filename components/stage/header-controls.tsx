@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   Download,
@@ -10,6 +10,7 @@ import {
   Moon,
   Package,
   Settings,
+  ShieldCheck,
   Sun,
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
@@ -29,6 +30,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { StageMode } from '@/lib/types/stage';
+import { guardCourseware } from '@/lib/courseware-guard';
+import { CoursewareGuardDialog } from '@/components/courseware/courseware-guard-dialog';
 
 interface HeaderControlsProps {
   readonly mode?: StageMode;
@@ -65,12 +68,14 @@ export function HeaderControls({
   const { t } = useI18n();
   const { theme, setTheme } = useTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [coursewareGuardOpen, setCoursewareGuardOpen] = useState(false);
 
   // Export plumbing — uses the stage / media task stores to check
   // readiness, then hands off to the export hooks. Available in both
   // playback and edit chrome so the icon's screen position is stable
   // across mode swaps (was previously in `Header` only, missing from
   // CommandBar's right cluster).
+  const stage = useStageStore((s) => s.stage);
   const scenes = useStageStore((s) => s.scenes);
   const generatingOutlines = useStageStore((s) => s.generatingOutlines);
   const failedOutlines = useStageStore((s) => s.failedOutlines);
@@ -85,6 +90,10 @@ export function HeaderControls({
     generatingOutlines.length === 0 &&
     failedOutlines.length === 0 &&
     Object.values(mediaTasks).every((task) => task.status === 'done' || task.status === 'failed');
+  const guardReport = useMemo(
+    () => (stage ? guardCourseware({ stage, scenes }).report : null),
+    [stage, scenes],
+  );
 
   const handleClickOutside = useCallback(
     (e: MouseEvent) => {
@@ -233,6 +242,27 @@ export function HeaderControls({
         </label>
       )}
 
+      <button
+        onClick={() => setCoursewareGuardOpen(true)}
+        disabled={!stage || scenes.length === 0}
+        title={t('coursewareGuard.title')}
+        className={cn(
+          'relative shrink-0 rounded-full p-2 transition-all',
+          stage && scenes.length > 0
+            ? 'text-gray-400 hover:bg-white hover:text-gray-800 hover:shadow-sm dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200'
+            : 'cursor-not-allowed text-gray-300 opacity-50 dark:text-gray-600',
+        )}
+        aria-label={t('coursewareGuard.title')}
+      >
+        <ShieldCheck className="size-4" />
+        {guardReport && guardReport.counts.critical > 0 && (
+          <span className="absolute right-1 top-1 size-1.5 rounded-full bg-red-500" />
+        )}
+        {guardReport && guardReport.counts.critical === 0 && guardReport.counts.warning > 0 && (
+          <span className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-500" />
+        )}
+      </button>
+
       {/* Export / Download — lives to the right of the Pro Switch.
           Not a settings function so it does not belong inside the
           settings pill; kept as a separate sibling sitting between the
@@ -314,6 +344,14 @@ export function HeaderControls({
       </div>
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <CoursewareGuardDialog
+        open={coursewareGuardOpen}
+        onOpenChange={setCoursewareGuardOpen}
+        mode={mode}
+        onToggleEditMode={onToggleEditMode}
+        onExportCourseware={exportClassroomZip}
+        exporting={isExportingZip}
+      />
     </div>
   );
 }

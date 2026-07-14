@@ -111,6 +111,9 @@ export function SlideElement({
     <div
       className="slide-element"
       id={`${idPrefix}${elementInfo.id}`}
+      data-slide-element-id={elementInfo.id}
+      data-slide-element-type={elementInfo.type}
+      data-slide-element-group-id={elementInfo.groupId}
       style={{
         position: 'absolute',
         inset: 0,

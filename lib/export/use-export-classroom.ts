@@ -18,6 +18,7 @@ import {
 import { collectAudioFiles, collectMediaFiles, actionsToManifest } from './classroom-zip-utils';
 import type { SpeechAction } from '@/lib/types/action';
 import { createLogger } from '@/lib/logger';
+import { guardCourseware } from '@/lib/courseware-guard';
 import {
   inlineHtmlAssets,
   createAssetFetcher,
@@ -46,8 +47,18 @@ export function useExportClassroom() {
   const { t } = useI18n();
 
   const exportClassroomZip = useCallback(async () => {
-    const { stage, scenes } = useStageStore.getState();
-    if (!stage?.id || scenes.length === 0) return;
+    const current = useStageStore.getState();
+    if (!current.stage?.id || current.scenes.length === 0) return;
+
+    const guarded = guardCourseware(
+      { stage: current.stage, scenes: current.scenes },
+      { mode: 'safe-fix' },
+    );
+    if (!guarded.report.publishable) {
+      toast.error(t('coursewareGuard.exportBlocked', { count: guarded.report.counts.critical }));
+      return;
+    }
+    const { stage, scenes } = guarded.bundle;
 
     setExporting(true);
     const toastId = toast.loading(t('export.exporting'));
@@ -197,6 +208,7 @@ export function useExportClassroom() {
       };
 
       zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+      zip.file('courseware-guard-report.json', JSON.stringify(guarded.report, null, 2));
 
       // 9. Add media blobs to ZIP
       for (const af of audioFiles) {
@@ -232,6 +244,9 @@ export function useExportClassroom() {
         });
       }
       toast.success(t('export.exportSuccess'), { id: toastId });
+      if (guarded.report.repairs.length > 0) {
+        toast.info(t('coursewareGuard.exportRepaired', { count: guarded.report.repairs.length }));
+      }
     } catch (error) {
       log.error('Classroom ZIP export failed:', error);
       toast.error(t('export.exportFailed'), { id: toastId });

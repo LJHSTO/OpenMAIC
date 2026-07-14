@@ -21,6 +21,7 @@ import {
   runClassroomLoad,
   saveGeneratedAgentsForCurrentLoad,
 } from '@/lib/classroom/load-classroom';
+import { toast } from 'sonner';
 
 const log = createLogger('Classroom');
 
@@ -38,6 +39,9 @@ export default function ClassroomDetailPage() {
   const { generateRemaining, retrySingleOutline, stop } = useSceneGenerator({
     onComplete: () => {
       log.info('[Classroom] All scenes generated');
+    },
+    onFinalizationFailed: (message) => {
+      toast.error('Courseware finalization failed', { description: message, duration: 12_000 });
     },
   });
 

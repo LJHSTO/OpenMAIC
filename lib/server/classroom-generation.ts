@@ -23,7 +23,6 @@ import { resolveVocationalActive } from '@/lib/config/feature-flags';
 import { buildSearchQuery } from '@/lib/server/search-query-builder';
 import { formatSearchResultsAsContext, searchWeb } from '@/lib/web-search';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
-import { persistClassroom } from '@/lib/server/classroom-storage';
 import {
   generateMediaForClassroom,
   replaceMediaPlaceholders,
@@ -34,6 +33,11 @@ import { buildVideoManifestFromOutlines } from '@/lib/media/video-manifest';
 import type { UserRequirements } from '@/lib/types/generation';
 import type { Scene, Stage } from '@/lib/types/stage';
 import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
+import { guardGeneratedScene, type CoursewareGuardReport } from '@/lib/courseware-guard';
+import type { CoursewareVisualAuditReport } from '@/lib/courseware-guard/visual-audit';
+import type { CoursewareArchiveResult } from '@/lib/courseware-guard/archive';
+import { finalizeCourseware } from '@/lib/server/finalize-courseware';
+import { repairCoursewareScene } from '@/lib/server/repair-courseware-scene';
 
 const log = createLogger('Classroom');
 
@@ -57,7 +61,11 @@ export type ClassroomGenerationStep =
   | 'generating_scenes'
   | 'generating_media'
   | 'generating_tts'
+  | 'validating'
   | 'persisting'
+  | 'visual_auditing'
+  | 'repairing'
+  | 'archiving'
   | 'completed';
 
 export interface ClassroomGenerationProgress {
@@ -75,6 +83,9 @@ export interface GenerateClassroomResult {
   scenes: Scene[];
   scenesCount: number;
   createdAt: string;
+  guardReport: CoursewareGuardReport;
+  visualReport: CoursewareVisualAuditReport;
+  archive: CoursewareArchiveResult;
 }
 
 function createInMemoryStore(stage: Stage): StageStore {
@@ -480,6 +491,26 @@ export async function generateClassroom(
       continue;
     }
 
+    const sceneState = store.getState();
+    const generatedScene = sceneState.scenes.find((scene) => scene.id === sceneId);
+    if (!generatedScene) {
+      log.warn(`Skipping scene "${safeOutline.title}" - created scene was not found in store`);
+      continue;
+    }
+    const priorScenes = sceneState.scenes.filter((scene) => scene !== generatedScene);
+    const sceneGuard = guardGeneratedScene(stage, priorScenes, generatedScene);
+    store.setState({
+      stage: sceneGuard.bundle.stage,
+      scenes: sceneGuard.bundle.scenes,
+      currentSceneId: sceneGuard.scene.id,
+    });
+    log.info(`Scene guard completed for "${safeOutline.title}"`, {
+      changed: sceneGuard.report.changed,
+      critical: sceneGuard.report.counts.critical,
+      warning: sceneGuard.report.counts.warning,
+      repairs: sceneGuard.report.repairs.length,
+    });
+
     generatedScenes += 1;
     const progressEnd = 30 + Math.floor(((index + 1) / Math.max(outlines.length, 1)) * 60);
     await options.onProgress?.({
@@ -535,24 +566,42 @@ export async function generateClassroom(
     }
   }
 
-  await options.onProgress?.({
-    step: 'persisting',
-    progress: 98,
-    message: 'Persisting classroom data',
-    scenesGenerated: scenes.length,
-    totalScenes: outlines.length,
-  });
-
-  const persisted = await persistClassroom(
-    {
-      id: stageId,
-      stage,
-      scenes,
+  const finalized = await finalizeCourseware({
+    stage,
+    scenes,
+    model: modelString,
+    baseUrl: options.baseUrl,
+    repairScene: async (scene, instruction) => {
+      const repaired = await repairCoursewareScene({
+        stage,
+        scene,
+        scenes,
+        outlines,
+        instruction,
+        aiCall: async (_repairStage, systemPrompt, userPrompt) =>
+          sceneAiCall(systemPrompt, userPrompt),
+      });
+      if (repaired && input.enableTTS) {
+        await generateTTSForClassroom([repaired], stageId, options.baseUrl);
+        if (
+          (repaired.actions ?? []).some((action) => action.type === 'speech' && !action.audioId)
+        ) {
+          throw new Error('Automatic slide repair could not regenerate all narration audio');
+        }
+      }
+      return repaired;
     },
-    options.baseUrl,
-  );
-
-  log.info(`Classroom persisted: ${persisted.id}, URL: ${persisted.url}`);
+    onPhase: async (step, message) => {
+      await options.onProgress?.({
+        step,
+        progress: step === 'validating' ? 97 : step === 'persisting' ? 98 : 99,
+        message,
+        scenesGenerated: scenes.length,
+        totalScenes: outlines.length,
+      });
+    },
+  });
+  log.info(`Courseware archive created: ${finalized.archive.path}`);
 
   await options.onProgress?.({
     step: 'completed',
@@ -563,11 +612,14 @@ export async function generateClassroom(
   });
 
   return {
-    id: persisted.id,
-    url: persisted.url,
-    stage,
-    scenes,
-    scenesCount: scenes.length,
-    createdAt: persisted.createdAt,
+    id: finalized.id,
+    url: finalized.url,
+    stage: finalized.stage,
+    scenes: finalized.scenes,
+    scenesCount: finalized.scenes.length,
+    createdAt: finalized.createdAt,
+    guardReport: finalized.guardReport,
+    visualReport: finalized.visualReport,
+    archive: finalized.archive,
   };
 }

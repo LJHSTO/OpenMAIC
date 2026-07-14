@@ -5,6 +5,7 @@ import { useStageStore } from '@/lib/store/stage';
 import { isSceneEditLocked } from '@/lib/edit/regen-lock';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { useSettingsStore } from '@/lib/store/settings';
+import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { db } from '@/lib/utils/database';
 import type {
   SceneOutline,
@@ -28,8 +29,102 @@ import {
   withGenerationRetry,
   type GenerationRetryOptions,
 } from '@/lib/generation/generation-retry';
+import { guardGeneratedScene } from '@/lib/courseware-guard';
+import { uploadClientCoursewareResources } from '@/lib/courseware-guard/upload-client-resources';
 
 const log = createLogger('SceneGenerator');
+
+function addGuardedGeneratedScene(scene: Scene): Scene | null {
+  const state = useStageStore.getState();
+  if (!state.stage) return null;
+  const guarded = guardGeneratedScene(state.stage, state.scenes, scene);
+  state.addScene(guarded.scene);
+  if (guarded.report.changed || guarded.report.issues.length > 0) {
+    log.info('Generated scene guard completed', {
+      sceneId: guarded.scene.id,
+      changed: guarded.report.changed,
+      critical: guarded.report.counts.critical,
+      warning: guarded.report.counts.warning,
+      repairs: guarded.report.repairs.length,
+    });
+  }
+  return guarded.scene;
+}
+
+function preserveClientMediaReferences(originalScenes: Scene[], finalizedScenes: Scene[]): Scene[] {
+  const originalBySceneId = new Map(originalScenes.map((scene) => [scene.id, scene]));
+  return finalizedScenes.map((scene) => {
+    const original = originalBySceneId.get(scene.id);
+    if (scene.content.type !== 'slide' || original?.content.type !== 'slide') return scene;
+    const originalElements = new Map(
+      original.content.canvas.elements.map((element) => [element.id, element]),
+    );
+    const elements = scene.content.canvas.elements.map((element) => {
+      const prior = originalElements.get(element.id);
+      if (
+        (element.type !== 'image' && element.type !== 'video') ||
+        (prior?.type !== 'image' && prior?.type !== 'video') ||
+        typeof element.src !== 'string' ||
+        !element.src.includes('/api/classroom-media/')
+      )
+        return element;
+      return {
+        ...element,
+        src: prior.src,
+        ...(element.type === 'video' && prior.type === 'video' ? { poster: prior.poster } : {}),
+      };
+    });
+    return {
+      ...scene,
+      content: { ...scene.content, canvas: { ...scene.content.canvas, elements } },
+    } as Scene;
+  });
+}
+
+async function finalizeGeneratedCourseware(): Promise<void> {
+  const state = useStageStore.getState();
+  if (!state.stage || state.scenes.length === 0) {
+    throw new Error('Cannot finalize an empty classroom');
+  }
+  const failedMedia = Object.values(useMediaGenerationStore.getState().tasks).filter(
+    (task) => task.stageId === state.stage?.id && task.status === 'failed',
+  );
+  if (failedMedia.length > 0) {
+    throw new Error(`Cannot finalize: ${failedMedia.length} generated media resource(s) failed`);
+  }
+  const scenesWithResources = await uploadClientCoursewareResources(state.stage.id, state.scenes);
+  const model = getCurrentModelConfig().modelString || 'unknown-model';
+  const settings = useSettingsStore.getState();
+  const response = await fetch('/api/courseware-guard/finalize', {
+    method: 'POST',
+    headers: getApiHeaders(),
+    body: JSON.stringify(
+      withThinkingConfig({
+        stage: state.stage,
+        scenes: scenesWithResources,
+        outlines: state.outlines,
+        model,
+        enableTTS: settings.ttsEnabled && settings.ttsProviderId !== 'browser-native-tts',
+      }),
+    ),
+  });
+  const result = (await readJsonResponse(response)) as {
+    success?: boolean;
+    error?: string;
+    evidenceDir?: string;
+    stage?: typeof state.stage;
+    scenes?: Scene[];
+    archive?: { path?: string };
+  };
+  if (!response.ok || !result.success || !result.stage || !result.scenes) {
+    const evidence = result.evidenceDir ? ` Evidence: ${result.evidenceDir}` : '';
+    throw new Error(`${result.error || 'Courseware finalization failed'}.${evidence}`);
+  }
+  const finalizedScenes = preserveClientMediaReferences(state.scenes, result.scenes);
+  useStageStore.setState({ stage: result.stage, scenes: finalizedScenes });
+  await useStageStore.getState().saveToStorage();
+  log.info('Courseware finalization completed', { archivePath: result.archive?.path });
+}
 
 interface SceneContentResult {
   success: boolean;
@@ -400,6 +495,7 @@ export interface UseSceneGeneratorOptions {
   onSceneFailed?: (outline: SceneOutline, error: string) => void;
   onPhaseChange?: (phase: 'content' | 'actions', outline: SceneOutline) => void;
   onComplete?: () => void;
+  onFinalizationFailed?: (error: string) => void;
 }
 
 export interface GenerationParams {
@@ -420,6 +516,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
   const abortRef = useRef(false);
   const generatingRef = useRef(false);
   const mediaAbortRef = useRef<AbortController | null>(null);
+  const mediaPromiseRef = useRef<Promise<void> | null>(null);
   const fetchAbortRef = useRef<AbortController | null>(null);
   const lastParamsRef = useRef<GenerationParams | null>(null);
   const generateRemainingRef = useRef<((params: GenerationParams) => Promise<void>) | null>(null);
@@ -459,10 +556,19 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         .sort((a, b) => a.order - b.order);
 
       if (pending.length === 0) {
-        store.getState().setGenerationStatus('completed');
-        store.getState().setGeneratingOutlines([]);
-        store.getState().setGenerationComplete(true);
-        options.onComplete?.();
+        try {
+          await mediaPromiseRef.current;
+          await finalizeGeneratedCourseware();
+          store.getState().setGenerationStatus('completed');
+          store.getState().setGeneratingOutlines([]);
+          store.getState().setGenerationComplete(true);
+          options.onComplete?.();
+        } catch (error) {
+          const message = messageFromError(error, 'Courseware finalization failed');
+          log.error('Courseware finalization failed:', error);
+          store.getState().setGenerationStatus('paused');
+          options.onFinalizationFailed?.(message);
+        }
         generatingRef.current = false;
         return;
       }
@@ -471,7 +577,11 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
 
       // Launch media generation in parallel — does not block content/action generation
       mediaAbortRef.current = new AbortController();
-      generateMediaForOutlines(outlines, stage.id, mediaAbortRef.current.signal).catch((err) => {
+      mediaPromiseRef.current = generateMediaForOutlines(
+        outlines,
+        stage.id,
+        mediaAbortRef.current.signal,
+      ).catch((err) => {
         log.warn('Media generation error:', err);
       });
 
@@ -655,8 +765,12 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             }
 
             removeGeneratingOutline(outline.id);
-            store.getState().addScene(scene);
-            options.onSceneGenerated?.(scene, outline.order);
+            const guardedScene = addGuardedGeneratedScene(scene);
+            if (!guardedScene) {
+              pausedByFailureOrAbort = true;
+              break;
+            }
+            options.onSceneGenerated?.(guardedScene, outline.order);
             previousSpeeches = actionsResult.previousSpeeches || [];
           } else {
             if (abortRef.current || store.getState().generationEpoch !== startEpoch) {
@@ -677,10 +791,19 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             // surface them for retry instead of signalling a clean completion.
             store.getState().setGenerationStatus('paused');
           } else {
-            store.getState().setGenerationStatus('completed');
-            store.getState().setGeneratingOutlines([]);
-            store.getState().setGenerationComplete(true);
-            options.onComplete?.();
+            try {
+              await mediaPromiseRef.current;
+              await finalizeGeneratedCourseware();
+              store.getState().setGenerationStatus('completed');
+              store.getState().setGeneratingOutlines([]);
+              store.getState().setGenerationComplete(true);
+              options.onComplete?.();
+            } catch (error) {
+              const message = messageFromError(error, 'Courseware finalization failed');
+              log.error('Courseware finalization failed:', error);
+              store.getState().setGenerationStatus('paused');
+              options.onFinalizationFailed?.(message);
+            }
           }
         }
       } catch (err: unknown) {
@@ -823,7 +946,11 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         }
 
         removeGeneratingOutline();
-        store.getState().addScene(actionsResult.scene);
+        const guardedScene = addGuardedGeneratedScene(actionsResult.scene);
+        if (!guardedScene) {
+          store.getState().addFailedOutline(outline);
+          return;
+        }
 
         // Resume remaining generation if there are pending outlines
         if (store.getState().generatingOutlines.length > 0 && lastParamsRef.current) {
@@ -833,7 +960,18 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
           // generateRemaining completion path is not reached on the retry flow,
           // so mark completion here too — otherwise a later delete would treat
           // the orphaned outline as pending and regenerate it.
-          store.getState().markGenerationCompleteIfDone();
+          try {
+            await mediaPromiseRef.current;
+            await finalizeGeneratedCourseware();
+            store.getState().setGenerationStatus('completed');
+            store.getState().setGenerationComplete(true);
+            options.onComplete?.();
+          } catch (error) {
+            const message = messageFromError(error, 'Courseware finalization failed');
+            log.error('Courseware finalization failed:', error);
+            store.getState().setGenerationStatus('paused');
+            options.onFinalizationFailed?.(message);
+          }
         }
       } catch (err) {
         if (!isAbortError(err)) {
@@ -841,7 +979,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         }
       }
     },
-    [store],
+    [options, store],
   );
 
   return { generateRemaining, retrySingleOutline, stop, isGenerating };

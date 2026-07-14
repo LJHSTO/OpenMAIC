@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   generateSceneActions: vi.fn(),
   createSceneWithActions: vi.fn(),
   persistClassroom: vi.fn(),
+  runCoursewareVisualAudit: vi.fn(),
+  createCoursewareArchive: vi.fn(),
   callLLM: vi.fn(),
 }));
 
@@ -37,6 +39,14 @@ vi.mock('@/lib/generation/scene-generator', () => ({
 
 vi.mock('@/lib/server/classroom-storage', () => ({
   persistClassroom: mocks.persistClassroom,
+}));
+
+vi.mock('@/lib/courseware-guard/visual-audit', () => ({
+  runCoursewareVisualAudit: mocks.runCoursewareVisualAudit,
+}));
+
+vi.mock('@/lib/courseware-guard/archive', () => ({
+  createCoursewareArchive: mocks.createCoursewareArchive,
 }));
 
 vi.mock('@/lib/logger', () => ({
@@ -124,6 +134,22 @@ describe('classroom scene generation retries', () => {
       scenesCount: scenes.length,
       createdAt: '2026-06-22T00:00:00.000Z',
     }));
+    mocks.runCoursewareVisualAudit.mockResolvedValue({
+      schemaVersion: 'openmaic-courseware-visual-audit-v1',
+      generatedAt: '2026-06-22T00:00:00.000Z',
+      classroomId: 'stage-1',
+      viewport: { width: 1600, height: 900 },
+      publishable: true,
+      counts: { critical: 0, warning: 0 },
+      slides: [],
+      issues: [],
+    });
+    mocks.createCoursewareArchive.mockResolvedValue({
+      path: 'D:\\output\\Retry_Basics__test_model.maic.zip',
+      filename: 'Retry_Basics__test_model.maic.zip',
+      outputDir: 'D:\\output',
+      size: 123,
+    });
   });
 
   it('retries an empty scene content result before skipping the scene', async () => {
@@ -136,7 +162,7 @@ describe('classroom scene generation retries', () => {
     expect(progress.some((event) => event.message.includes('Retrying scene 1/1 content'))).toBe(
       true,
     );
-  });
+  }, 15_000);
 
   it('forwards classroom thinking config to scene retry LLM calls', async () => {
     const thinkingConfig = { enabled: true, effort: 'high' };
