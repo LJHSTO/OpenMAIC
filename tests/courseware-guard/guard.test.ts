@@ -161,6 +161,49 @@ describe('guardCourseware', () => {
     expect(result.bundle.scenes[0]).toEqual(input.scenes[0]);
   });
 
+  it('accepts line elements without box-only height and rotate fields', () => {
+    const input = validBundle();
+    input.scenes[0] = {
+      ...input.scenes[0],
+      type: 'slide',
+      content: {
+        type: 'slide',
+        canvas: {
+          id: 'slide-1',
+          viewportSize: 1000,
+          viewportRatio: 0.5625,
+          theme: {
+            backgroundColor: '#ffffff',
+            themeColors: ['#111111'],
+            fontColor: '#111111',
+            fontName: 'Arial',
+          },
+          elements: [
+            {
+              id: 'line-1',
+              type: 'line',
+              left: 100,
+              top: 100,
+              width: 3,
+              start: [0, 0],
+              end: [200, 0],
+              style: 'solid',
+              color: '#111111',
+              points: ['', 'arrow'],
+            },
+          ],
+        },
+      },
+    };
+
+    const result = guardCourseware(input);
+
+    expect(result.report.issues).not.toContainEqual(
+      expect.objectContaining({ code: 'slide_element_geometry_invalid' }),
+    );
+    expect(result.report.publishable).toBe(true);
+  });
+
   it('reports significant overlap between content-bearing elements but ignores backgrounds', () => {
     const input = validBundle();
     const base = {

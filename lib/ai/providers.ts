@@ -1016,6 +1016,76 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     ],
   },
 
+  innospark: {
+    id: 'innospark',
+    name: 'InnoSpark',
+    type: 'openai',
+    defaultBaseUrl: 'https://api.innospark.cn/v1',
+    supportsModelDiscovery: true,
+    requiresApiKey: true,
+    models: [
+      {
+        id: 'gpt-5.4-pro',
+        name: 'GPT-5.4 Pro',
+        contextWindow: 1050000,
+        outputWindow: 128000,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'gpt-5.4',
+        name: 'GPT-5.4',
+        contextWindow: 1050000,
+        outputWindow: 128000,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'claude-opus-4-6',
+        name: 'Claude Opus 4.6',
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'claude-sonnet-4-6',
+        name: 'Claude Sonnet 4.6',
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'gemini-3.1-pro-preview',
+        name: 'Gemini 3.1 Pro Preview',
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'gemini-3-flash-preview',
+        name: 'Gemini 3 Flash Preview',
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'deepseek-v4-pro',
+        name: 'DeepSeek V4 Pro',
+        capabilities: { streaming: true, tools: true, vision: false },
+      },
+      {
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        capabilities: { streaming: true, tools: true, vision: false },
+      },
+      {
+        id: 'doubao-seed-2-0-pro-260215',
+        name: 'Doubao Seed 2.0 Pro',
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'doubao-seed-2-0-code-preview-260215',
+        name: 'Doubao Seed 2.0 Code Preview',
+        capabilities: { streaming: true, tools: true, vision: false },
+      },
+      {
+        id: 'kimi-k2.6',
+        name: 'Kimi K2.6',
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+    ],
+  },
+
   grok: {
     id: 'grok',
     name: 'Grok',

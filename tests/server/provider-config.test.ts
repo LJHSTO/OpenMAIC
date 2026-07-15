@@ -18,6 +18,7 @@ const ENV_PREFIXES_TO_CLEAR = [
   'SILICONFLOW',
   'DOUBAO',
   'OPENROUTER',
+  'INNOSPARK',
   'GROK',
   'TENCENT',
   'TENCENT_HUNYUAN',
@@ -261,6 +262,17 @@ providers:
         'deepseek/deepseek-v4-pro',
         'deepseek/deepseek-v4-flash',
       ]);
+    });
+
+    it('maps InnoSpark env prefix to provider ID', async () => {
+      vi.stubEnv('INNOSPARK_API_KEY', 'sk-innospark');
+      vi.stubEnv('INNOSPARK_BASE_URL', 'https://api.innospark.cn/v1');
+      vi.stubEnv('INNOSPARK_MODELS', 'gpt-5.4,gemini-3-flash-preview');
+      const { getServerProviders, resolveBaseUrl } = await import('@/lib/server/provider-config');
+      const providers = getServerProviders();
+
+      expect(providers.innospark.models).toEqual(['gpt-5.4', 'gemini-3-flash-preview']);
+      expect(resolveBaseUrl('innospark')).toBe('https://api.innospark.cn/v1');
     });
 
     it('maps Azure deployment names to the built-in provider', async () => {

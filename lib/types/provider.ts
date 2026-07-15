@@ -18,6 +18,7 @@ export type BuiltInProviderId =
   | 'siliconflow'
   | 'doubao'
   | 'openrouter'
+  | 'innospark'
   | 'grok'
   | 'tencent-hunyuan'
   | 'xiaomi'

@@ -108,4 +108,51 @@ describe('courseware multimodal vision review', () => {
       }),
     ).rejects.toThrow(/invalid audit response/);
   });
+
+  it('downgrades semantic findings to warnings for human confirmation', async () => {
+    const screenshotPath = path.join(os.tmpdir(), `openmaic-vision-${Date.now()}-semantic.png`);
+    tempFiles.push(screenshotPath);
+    await fs.writeFile(screenshotPath, Buffer.from('fake-png'));
+
+    const findings = await reviewCoursewareScreenshot({
+      screenshotPath,
+      scene: {
+        id: 'scene-1',
+        stageId: 'stage-1',
+        title: 'Limits',
+        order: 0,
+        type: 'slide',
+        content: {
+          type: 'slide',
+          canvas: {
+            id: 'canvas-1',
+            viewportSize: 1000,
+            viewportRatio: 0.5625,
+            theme: {
+              backgroundColor: '#fff',
+              themeColors: ['#000'],
+              fontColor: '#000',
+              fontName: 'Arial',
+            },
+            elements: [],
+          },
+        },
+        actions: [],
+      },
+      callVisionModel: async () =>
+        JSON.stringify({
+          issues: [
+            {
+              severity: 'critical',
+              category: 'semantic_confusion',
+              message: 'The definition appears inconsistent',
+            },
+          ],
+        }),
+    });
+
+    expect(findings).toEqual([
+      expect.objectContaining({ category: 'semantic_confusion', severity: 'warning' }),
+    ]);
+  });
 });

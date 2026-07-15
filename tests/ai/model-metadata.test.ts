@@ -7,6 +7,17 @@ import type { ProviderConfig, ProviderId } from '@/lib/types/provider';
 // These models intentionally do not expose a configurable thinking control.
 const MODELS_WITHOUT_CONFIGURABLE_THINKING = new Set<string>([
   'siliconflow:Pro/moonshotai/Kimi-K2.5',
+  'innospark:gpt-5.4-pro',
+  'innospark:gpt-5.4',
+  'innospark:claude-opus-4-6',
+  'innospark:claude-sonnet-4-6',
+  'innospark:gemini-3.1-pro-preview',
+  'innospark:gemini-3-flash-preview',
+  'innospark:deepseek-v4-pro',
+  'innospark:deepseek-v4-flash',
+  'innospark:doubao-seed-2-0-pro-260215',
+  'innospark:doubao-seed-2-0-code-preview-260215',
+  'innospark:kimi-k2.6',
   'grok:grok-4.20',
   'grok:grok-4-1-fast-non-reasoning',
   'grok:grok-code-fast-1',

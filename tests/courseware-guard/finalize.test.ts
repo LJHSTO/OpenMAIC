@@ -53,7 +53,7 @@ const scene = {
 
 describe('finalizeCourseware visual repair loop', () => {
   afterEach(async () => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     await fs.rm(path.join(process.cwd(), 'data', 'courseware-audits', stage.id), {
       recursive: true,
       force: true,
@@ -118,6 +118,189 @@ describe('finalizeCourseware visual repair loop', () => {
     expect(mocks.persistClassroom).toHaveBeenCalledTimes(2);
     expect(mocks.createCoursewareArchive).toHaveBeenCalledOnce();
     expect(result.scenes[0].title).toBe('Repaired slide');
+  });
+
+  it('repairs actionable multimodal warnings before archiving', async () => {
+    mocks.persistClassroom.mockResolvedValue({
+      id: stage.id,
+      url: `http://localhost/classroom/${stage.id}`,
+      createdAt: '2026-07-15T00:00:00.000Z',
+    });
+    mocks.runCoursewareVisualAudit
+      .mockResolvedValueOnce({
+        schemaVersion: 'openmaic-courseware-visual-audit-v1',
+        generatedAt: '2026-07-15T00:00:00.000Z',
+        classroomId: stage.id,
+        viewport: { width: 1600, height: 900 },
+        publishable: true,
+        counts: { critical: 0, warning: 1 },
+        slides: [],
+        issues: [
+          {
+            id: 'visual-0001',
+            code: 'vision_issue',
+            severity: 'warning',
+            sceneId: scene.id,
+            elementIds: ['table-1'],
+            category: 'broken_math',
+            message: 'Formula is rendered as plain source text',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openmaic-courseware-visual-audit-v1',
+        generatedAt: '2026-07-15T00:01:00.000Z',
+        classroomId: stage.id,
+        viewport: { width: 1600, height: 900 },
+        publishable: true,
+        counts: { critical: 0, warning: 0 },
+        slides: [],
+        issues: [],
+      });
+    mocks.createCoursewareArchive.mockResolvedValue({
+      path: 'D:\\output\\repair.maic.zip',
+      filename: 'repair.maic.zip',
+      outputDir: 'D:\\output',
+      size: 100,
+    });
+    const repairScene = vi.fn(async (current) => ({ ...current, title: 'Repaired formula' }));
+    const { finalizeCourseware } = await import('@/lib/server/finalize-courseware');
+
+    const result = await finalizeCourseware({
+      stage,
+      scenes: [scene],
+      model: 'test:model',
+      baseUrl: 'http://localhost',
+      repairScene,
+    });
+
+    expect(repairScene).toHaveBeenCalledOnce();
+    expect(mocks.runCoursewareVisualAudit).toHaveBeenCalledTimes(2);
+    expect(result.scenes[0].title).toBe('Repaired formula');
+  });
+
+  it('does not regenerate a slide for an unconfirmed semantic warning', async () => {
+    mocks.persistClassroom.mockResolvedValue({
+      id: stage.id,
+      url: `http://localhost/classroom/${stage.id}`,
+      createdAt: '2026-07-15T00:00:00.000Z',
+    });
+    mocks.runCoursewareVisualAudit.mockResolvedValueOnce({
+      schemaVersion: 'openmaic-courseware-visual-audit-v1',
+      generatedAt: '2026-07-15T00:00:00.000Z',
+      classroomId: stage.id,
+      viewport: { width: 1600, height: 900 },
+      publishable: true,
+      counts: { critical: 0, warning: 1 },
+      slides: [],
+      issues: [
+        {
+          id: 'visual-0001',
+          code: 'vision_issue',
+          severity: 'warning',
+          sceneId: scene.id,
+          elementIds: ['definition-1'],
+          category: 'semantic_confusion',
+          message: 'The definition may be confusing',
+        },
+      ],
+    });
+    mocks.createCoursewareArchive.mockResolvedValue({
+      path: 'D:\\output\\repair.maic.zip',
+      filename: 'repair.maic.zip',
+      outputDir: 'D:\\output',
+      size: 100,
+    });
+    const repairScene = vi.fn(async (current) => ({ ...current, title: 'Unexpected rewrite' }));
+    const { finalizeCourseware } = await import('@/lib/server/finalize-courseware');
+
+    await finalizeCourseware({
+      stage,
+      scenes: [scene],
+      model: 'test:model',
+      baseUrl: 'http://localhost',
+      repairScene,
+    });
+
+    expect(repairScene).not.toHaveBeenCalled();
+    expect(mocks.runCoursewareVisualAudit).toHaveBeenCalledOnce();
+    expect(mocks.createCoursewareArchive).toHaveBeenCalledOnce();
+  });
+
+  it('runs another bounded repair pass when verification exposes a new runtime defect', async () => {
+    mocks.persistClassroom.mockResolvedValue({
+      id: stage.id,
+      url: `http://localhost/classroom/${stage.id}`,
+      createdAt: '2026-07-15T00:00:00.000Z',
+    });
+    mocks.runCoursewareVisualAudit
+      .mockResolvedValueOnce({
+        schemaVersion: 'openmaic-courseware-visual-audit-v1',
+        generatedAt: '2026-07-15T00:00:00.000Z',
+        classroomId: stage.id,
+        viewport: { width: 1600, height: 900 },
+        publishable: false,
+        counts: { critical: 1, warning: 0 },
+        slides: [],
+        issues: [
+          {
+            id: 'visual-0001',
+            code: 'content_overlap',
+            severity: 'critical',
+            sceneId: scene.id,
+            message: 'Two text elements overlap',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openmaic-courseware-visual-audit-v1',
+        generatedAt: '2026-07-15T00:01:00.000Z',
+        classroomId: stage.id,
+        viewport: { width: 1600, height: 900 },
+        publishable: false,
+        counts: { critical: 1, warning: 0 },
+        slides: [],
+        issues: [
+          {
+            id: 'visual-0002',
+            code: 'console_error',
+            severity: 'critical',
+            sceneId: scene.id,
+            message: 'Invalid SVG path data',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openmaic-courseware-visual-audit-v1',
+        generatedAt: '2026-07-15T00:02:00.000Z',
+        classroomId: stage.id,
+        viewport: { width: 1600, height: 900 },
+        publishable: true,
+        counts: { critical: 0, warning: 0 },
+        slides: [],
+        issues: [],
+      });
+    mocks.createCoursewareArchive.mockResolvedValue({
+      path: 'D:\\output\\repair.maic.zip',
+      filename: 'repair.maic.zip',
+      outputDir: 'D:\\output',
+      size: 100,
+    });
+    const repairScene = vi.fn(async (current) => ({ ...current, title: 'Repaired slide' }));
+    const { finalizeCourseware } = await import('@/lib/server/finalize-courseware');
+
+    const result = await finalizeCourseware({
+      stage,
+      scenes: [scene],
+      model: 'test:model',
+      baseUrl: 'http://localhost',
+      repairScene,
+    });
+
+    expect(repairScene).toHaveBeenCalledTimes(2);
+    expect(mocks.runCoursewareVisualAudit).toHaveBeenCalledTimes(3);
+    expect(mocks.persistClassroom).toHaveBeenCalledTimes(3);
+    expect(result.visualReport.publishable).toBe(true);
   });
 
   it('repairs structurally invalid imported slides even when browser rendering cannot classify the layout', async () => {

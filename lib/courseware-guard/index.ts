@@ -355,7 +355,11 @@ function inspectBundle(bundle: CoursewareBundle): CoursewareIssue[] {
         if (!elementId || elementIds.has(elementId))
           add('slide_element_id_invalid', 'warning', `${elementPath}.id`, true, sceneId);
         else elementIds.add(elementId);
-        for (const field of ['left', 'top', 'width', 'height']) {
+        const geometryFields =
+          elementRecord.type === 'line'
+            ? (['left', 'top', 'width'] as const)
+            : (['left', 'top', 'width', 'height'] as const);
+        for (const field of geometryFields) {
           if (!Number.isFinite(elementRecord[field]))
             add(
               'slide_element_geometry_invalid',

@@ -70,7 +70,7 @@ export async function reviewCoursewareScreenshot(
   const screenshot = await fs.readFile(options.screenshotPath);
   const systemPrompt = `You are a strict visual QA reviewer for educational slides. Inspect the rendered screenshot as a real learner would. Report only defects visible in the screenshot or strongly supported by the supplied element metadata. Do not invent hidden problems and do not flag intentional decorative overlap.
 
-Critical means the learner cannot reliably read, understand, or use important content. Warning means visibly poor quality that remains usable. Check especially: clipped or hidden content, overlapping text/content, tiny or unreadable text, low contrast, broken formulas/charts/images, duplicated or empty content, confusing hierarchy, and obvious semantic presentation errors.
+Critical means the learner cannot reliably read, understand, or use important content. Warning means visibly poor quality that remains usable. Check especially: clipped or hidden content, overlapping text/content, tiny or unreadable text, low contrast, broken formulas/charts/images, duplicated or empty content, confusing hierarchy, and obvious semantic presentation errors. Semantic-confusion findings are always warnings for human confirmation; never mark them critical.
 
 Return only JSON in this exact shape:
 {"issues":[{"severity":"critical|warning","category":"overlap|clipping|overflow|contrast|legibility|broken_math|broken_media|duplicate_content|visual_hierarchy|semantic_confusion|empty_content|other","message":"specific visible defect and where it occurs","elementIds":["id-if-certain"]}]}
@@ -97,5 +97,9 @@ Canvas element metadata: ${elementSummary(options.scene)}`;
   if (!validated.success) {
     throw new Error(`Vision model returned an invalid audit response: ${validated.error.message}`);
   }
-  return validated.data.issues;
+  return validated.data.issues.map((issue) =>
+    issue.category === 'semantic_confusion' && issue.severity === 'critical'
+      ? { ...issue, severity: 'warning' as const }
+      : issue,
+  );
 }

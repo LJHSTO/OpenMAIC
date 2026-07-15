@@ -112,13 +112,14 @@ export async function POST(request: NextRequest) {
       model: body.model?.trim() || 'unknown-model',
       baseUrl: buildRequestOrigin(request),
       reviewScreenshot,
-      repairScene: async (scene, instruction) => {
+      repairScene: async (scene, instruction, repairContext) => {
         const repaired = await repairCoursewareScene({
           stage: body.stage!,
           scene,
           scenes: body.scenes!,
           outlines: body.outlines,
           instruction,
+          ...repairContext,
           aiCall: repairAiCall,
         });
         if (repaired && body.enableTTS) {

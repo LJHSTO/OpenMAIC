@@ -9,6 +9,7 @@ import {
   runCoursewareVisualAudit,
   type RunVisualAuditOptions,
   type CoursewareVisualAuditReport,
+  type VisualAuditIssue,
 } from '@/lib/courseware-guard/visual-audit';
 import { persistClassroom } from '@/lib/server/classroom-storage';
 import type { Scene, Stage } from '@/lib/types/stage';
@@ -20,6 +21,32 @@ const AI_REPAIRABLE_SLIDE_STRUCTURE_CODES = new Set([
   'slide_viewport_invalid',
   'slide_element_size_invalid',
 ]);
+
+const AI_REPAIRABLE_VISUAL_CODES = new Set([
+  'render_failed',
+  'console_error',
+  'resource_failed',
+  'image_failed',
+  'text_overflow',
+  'element_out_of_bounds',
+  'content_overlap',
+  'vision_issue',
+]);
+
+const AI_REPAIRABLE_VISUAL_WARNING_CATEGORIES = new Set([
+  'overlap',
+  'clipping',
+  'overflow',
+  'contrast',
+  'legibility',
+  'broken_math',
+  'broken_media',
+  'duplicate_content',
+  'visual_hierarchy',
+  'empty_content',
+]);
+
+const MAX_AUTOMATIC_REPAIR_PASSES = 5;
 
 export type CoursewareFinalizationPhase =
   | 'validating'
@@ -33,7 +60,11 @@ export interface FinalizeCoursewareOptions {
   scenes: Scene[];
   model: string;
   baseUrl: string;
-  repairScene?: (scene: Scene, instruction: string) => Promise<Scene | null>;
+  repairScene?: (
+    scene: Scene,
+    instruction: string,
+    context: { visualIssues: VisualAuditIssue[]; hasStructuralIssues: boolean },
+  ) => Promise<Scene | null>;
   reviewScreenshot?: RunVisualAuditOptions['reviewScreenshot'];
   onPhase?: (phase: CoursewareFinalizationPhase, message: string) => void | Promise<void>;
 }
@@ -105,36 +136,41 @@ export async function finalizeCourseware(
     'utf-8',
   );
 
-  const structuralRepairIssues = guarded.report.issues.filter(
-    (issue) =>
-      issue.severity === 'critical' &&
-      !!issue.sceneId &&
-      AI_REPAIRABLE_SLIDE_STRUCTURE_CODES.has(issue.code),
-  );
-  const repairableSceneIds = new Set([
-    ...structuralRepairIssues.map((issue) => issue.sceneId as string),
-    ...visualReport.issues
-      .filter(
-        (issue) =>
-          issue.severity === 'critical' &&
-          (issue.code === 'text_overflow' ||
-            issue.code === 'content_overlap' ||
-            issue.code === 'vision_issue'),
-      )
-      .map((issue) => issue.sceneId),
-  ]);
-  if (options.repairScene && repairableSceneIds.size > 0) {
+  const repairFailures: Array<{ pass: number; sceneId: string; error: string }> = [];
+  let repairPass = 0;
+  while (options.repairScene && repairPass < MAX_AUTOMATIC_REPAIR_PASSES) {
+    const structuralRepairIssues = guarded.report.issues.filter(
+      (issue) =>
+        issue.severity === 'critical' &&
+        !!issue.sceneId &&
+        AI_REPAIRABLE_SLIDE_STRUCTURE_CODES.has(issue.code),
+    );
+    const visualRepairIssues = visualReport.issues.filter(
+      (issue) =>
+        AI_REPAIRABLE_VISUAL_CODES.has(issue.code) &&
+        (issue.severity === 'critical' ||
+          issue.code === 'element_out_of_bounds' ||
+          (issue.code === 'vision_issue' &&
+            !!issue.category &&
+            AI_REPAIRABLE_VISUAL_WARNING_CATEGORIES.has(issue.category))),
+    );
+    const repairableSceneIds = new Set([
+      ...structuralRepairIssues.map((issue) => issue.sceneId as string),
+      ...visualRepairIssues.map((issue) => issue.sceneId),
+    ]);
+    if (repairableSceneIds.size === 0) break;
+
+    repairPass += 1;
     await options.onPhase?.(
       'repairing',
-      `Repairing ${repairableSceneIds.size} slide(s) that failed visual inspection`,
+      `Automatic repair pass ${repairPass}: repairing ${repairableSceneIds.size} slide(s)`,
     );
     const repairedScenes = [...guarded.bundle.scenes];
     let repairedCount = 0;
-    const repairFailures: Array<{ sceneId: string; error: string }> = [];
     for (const sceneId of repairableSceneIds) {
       const sceneIndex = repairedScenes.findIndex((scene) => scene.id === sceneId);
       if (sceneIndex < 0) continue;
-      const sceneIssues = visualReport.issues.filter((issue) => issue.sceneId === sceneId);
+      const sceneIssues = visualRepairIssues.filter((issue) => issue.sceneId === sceneId);
       const structuralSceneIssues = structuralRepairIssues.filter(
         (issue) => issue.sceneId === sceneId,
       );
@@ -148,7 +184,11 @@ export async function finalizeCourseware(
       try {
         const repaired = await options.repairScene(
           repairedScenes[sceneIndex],
-          `Fix only the slide layout defects listed below. Preserve the teaching meaning, language, visual style, and existing media. Ensure every text box fully contains its text and content elements do not overlap. Do not add unrelated content.\n\n${issueSummary}`,
+          `Fix only the slide defects listed below. Preserve the teaching meaning, language, visual style, existing media, and narration. Ensure text is readable, content does not overlap, media renders, and all SVG path data is valid. Do not add unrelated content.\n\n${issueSummary}`,
+          {
+            visualIssues: sceneIssues,
+            hasStructuralIssues: structuralSceneIssues.length > 0,
+          },
         );
         if (repaired) {
           repairedScenes[sceneIndex] = repaired;
@@ -156,45 +196,54 @@ export async function finalizeCourseware(
         }
       } catch (error) {
         repairFailures.push({
+          pass: repairPass,
           sceneId,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
-    if (repairFailures.length > 0) {
-      await fs.writeFile(
-        path.join(evidenceDir, 'courseware-repair-failures.json'),
-        JSON.stringify(repairFailures, null, 2),
-        'utf-8',
-      );
-    }
+    if (repairedCount === 0) break;
 
-    if (repairedCount > 0) {
-      guarded = guardCourseware(
-        { stage: guarded.bundle.stage, scenes: repairedScenes },
-        { mode: 'safe-fix' },
-      );
-      persisted = await persistClassroom(
-        {
-          id: guarded.bundle.stage.id,
-          stage: guarded.bundle.stage,
-          scenes: guarded.bundle.scenes,
-        },
-        options.baseUrl,
-      );
-      await options.onPhase?.(
-        'visual_auditing',
-        'Re-rendering repaired slides for visual verification',
-      );
-      screenshotsDir = path.join(evidenceDir, 'screenshots-repaired');
-      visualReport = await runCoursewareVisualAudit({
-        baseUrl: options.baseUrl,
-        classroomId: guarded.bundle.stage.id,
+    guarded = guardCourseware(
+      { stage: guarded.bundle.stage, scenes: repairedScenes },
+      { mode: 'safe-fix' },
+    );
+    persisted = await persistClassroom(
+      {
+        id: guarded.bundle.stage.id,
+        stage: guarded.bundle.stage,
         scenes: guarded.bundle.scenes,
-        screenshotsDir,
-        reviewScreenshot: options.reviewScreenshot,
-      });
-    }
+      },
+      options.baseUrl,
+    );
+    await options.onPhase?.(
+      'visual_auditing',
+      `Verification after automatic repair pass ${repairPass}`,
+    );
+    screenshotsDir = path.join(
+      evidenceDir,
+      repairPass === 1 ? 'screenshots-repaired' : `screenshots-repaired-pass-${repairPass}`,
+    );
+    visualReport = await runCoursewareVisualAudit({
+      baseUrl: options.baseUrl,
+      classroomId: guarded.bundle.stage.id,
+      scenes: guarded.bundle.scenes,
+      screenshotsDir,
+      reviewScreenshot: options.reviewScreenshot,
+    });
+    await fs.writeFile(
+      path.join(evidenceDir, `courseware-visual-report-pass-${repairPass + 1}.json`),
+      JSON.stringify(visualReport, null, 2),
+      'utf-8',
+    );
+  }
+
+  if (repairFailures.length > 0) {
+    await fs.writeFile(
+      path.join(evidenceDir, 'courseware-repair-failures.json'),
+      JSON.stringify(repairFailures, null, 2),
+      'utf-8',
+    );
   }
 
   await Promise.all([

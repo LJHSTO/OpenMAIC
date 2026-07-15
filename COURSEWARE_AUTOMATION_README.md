@@ -1,81 +1,19 @@
-# OpenMAIC 课件生成、自检修复与批量归档指南
+# OpenMAIC 课件生成、自检修复与批量归档使用说明
 
-本文面向所有本地部署或服务器部署用户，说明如何：
+本文说明如何安装 OpenMAIC、配置模型、批量读取提示词和 PDF 生成课件、检查导入课件，以及查看自动修复后的课件、报告和截图。
 
-- 对网页生成和导入的 `.maic.zip` 课件运行结构检查、浏览器截图检查和真实多模态模型检查。
-- 对可修复的问题调用现有课件编辑模型自动修复，并重新截图复检。
-- 用一个 PowerShell 脚本批量读取提示词和多个 PDF，按页码范围生成课件。
-- 将最终课件按“模型/课程标题”自动归档到指定目录。
+文中的 `$PROJECT_ROOT` 表示 OpenMAIC 仓库根目录。
 
-文中的 `$PROJECT_ROOT` 表示 OpenMAIC 仓库根目录。Windows 示例可替换为
-`C:\path\to\OpenMAIC`，Linux/macOS 示例可替换为 `/path/to/OpenMAIC`。仓库代码和配置中
-不依赖这些示例路径。
-
-## 1. 当前自检到底做了什么
-
-| 层次 | 是否调用模型 | 能检查什么 | 能否自动修复 |
-| --- | --- | --- | --- |
-| TypeScript 结构规则 | 否 | ID、场景关联、顺序、非法尺寸、越界、测验结构、HTML 基础安全等 | 只修复答案确定的问题 |
-| Playwright Chromium | 否 | 实际渲染、文字溢出、明显重叠、图片失败、请求失败、控制台错误 | 只生成证据和问题描述 |
-| 多模态截图审查 | 是 | 遮挡、裁切、低对比度、字号过小、公式/图表/图片外观、重复或空白内容、视觉层次等 | 将严重问题交给课件编辑模型 |
-| 课件编辑模型 | 是 | 根据结构问题、浏览器问题和多模态问题重生成出错场景 | 修复后再次截图复检 |
-
-`enableVisionAudit: true` 时，每张 Playwright 截图会真的发送给支持图片输入的模型；这不是仅靠
-Playwright 模拟出来的“AI 检查”。如果模型没有声明视觉能力，检查会明确失败，而不会假装已经完成。
-截图和页面中的教学内容会发送给 `courseware-vision-audit` 实际解析到的模型供应商；处理敏感课程前，
-请先确认供应商的数据保留、隐私和合规政策。
-
-Playwright 很适合测量 DOM、资源和运行时状态，但它本身不能可靠判断教学表达、审美、视觉层次、
-低对比度或“学生是否能理解”。多模态模型能补足一部分视觉和语义判断，但仍可能误报或漏报，
-所以任何系统都不能诚实地保证“自动发现所有错误”。重要课程发布前仍应保留人工抽检。
-
-### 生成课件的检查时机
-
-1. 每个场景生成后立即运行结构规则和确定性安全修复。
-2. 所有场景和媒体生成完成后保存一个可渲染草稿。
-3. Playwright 以 `1600x900` 逐页渲染并保存截图。
-4. 开启多模态检查时，把每张截图交给视觉模型。
-5. 对严重且可修复的问题调用现有 `regenerate_scene` 编辑流程。
-6. 保存修复后的场景并重新运行浏览器与多模态检查。
-7. 严重问题清零后才生成最终 `.maic.zip`；否则保留报告和截图，阻止归档。
-
-逐场景阶段只做不依赖最终媒体的结构检查。完整的截图检查放在全部内容和媒体生成完成后执行，
-避免把尚未生成的图片或视频占位符误判为最终错误。
-
-## 2. 导入课件后如何自检和修改
-
-导入 `.maic.zip` 后不需要先重新生成。进入课堂后，点击顶部工具栏的盾牌图标打开“课件检查”。
-
-对话框中的按钮含义：
-
-- **完整自检并自动修复**：上传当前浏览器中的本地媒体，运行结构规则、Playwright 截图、真实多模态
-  审查、AI 修复和复检。这是导入课件的完整自动处理入口。
-- **应用安全修复**：只处理无需模型判断的确定性问题，例如缺失 ID、错误课程关联和缺失 doctype。
-  没有确定性修复项时按钮会禁用，这是预期行为。
-- **定位并进入 Pro Mode**：切换到对应页并打开编辑器，不会仅因点击该按钮就自动改内容。
-- **下载检查报告**：下载当前结构规则报告。
-
-问题项会显示页码、场景标题、元素 ID、字段名和完整数据路径。完整检查执行后，同一可滚动列表还会
-显示浏览器与多模态模型的具体描述、问题类别和相关元素 ID。即使自动修复后仍未通过，已经修复的
-场景和剩余报告也会返回浏览器，不会只显示一句无法区分的通用错误。
-
-Pro Mode 需要在 `.env.local` 中启用：
-
-```dotenv
-NEXT_PUBLIC_MAIC_EDITOR_ENABLED=true
-```
-
-修改 `NEXT_PUBLIC_*` 变量后必须重启 OpenMAIC。完整自检按钮不依赖“这门课是否由当前 OpenMAIC
-生成”，但需要可用的 Playwright Chromium、课件编辑模型和视觉模型。
-
-## 3. 安装和启动
-
-要求：
+## 1. 环境要求
 
 - Node.js `>=20.9.0`
 - pnpm `10.x`
 - PowerShell 5.1 或 PowerShell 7+
-- 至少一个文本生成模型；启用真实截图审查时还需要支持图片输入的模型
+- Chromium（由 Playwright 安装）
+- 至少一个可用的文本模型
+- 启用多模态截图检查时，需要一个支持图片输入的模型
+
+## 2. 安装
 
 Windows PowerShell：
 
@@ -84,77 +22,164 @@ Set-Location C:\path\to\OpenMAIC
 pnpm install --frozen-lockfile
 pnpm exec playwright install chromium
 Copy-Item .env.example .env.local
-pnpm dev --hostname 127.0.0.1 --port 3000
 ```
 
-Linux/macOS：
+Linux 或 macOS：
 
 ```bash
 cd /path/to/OpenMAIC
 pnpm install --frozen-lockfile
 pnpm exec playwright install chromium
 cp .env.example .env.local
-pnpm dev --hostname 127.0.0.1 --port 3000
 ```
 
-浏览器打开 `http://127.0.0.1:3000`。
+## 3. 配置 `.env.local`
 
-## 4. 配置生成模型、视觉模型和输出目录
+`.env.local` 位于项目根目录。不要把真实密钥提交到 Git。
 
-先按项目主 README 配置至少一个模型供应商，并设置服务端默认模型。例如：
+### 3.1 InnoSpark
 
 ```dotenv
-OPENAI_API_KEY=your_api_key
-OPENAI_MODELS=gpt-5.5
-DEFAULT_MODEL=openai:gpt-5.5
+INNOSPARK_API_KEY=your_api_key
+INNOSPARK_BASE_URL=https://api.innospark.cn/v1
+INNOSPARK_MODELS=gpt-5.4-pro,gpt-5.4,claude-opus-4-6,claude-sonnet-4-6,gemini-3.1-pro-preview,gemini-3-flash-preview,deepseek-v4-pro,deepseek-v4-flash,doubao-seed-2-0-pro-260215,doubao-seed-2-0-code-preview-260215,kimi-k2.6
+DEFAULT_MODEL=innospark:gpt-5.4
+MODEL_ROUTES={"courseware-vision-audit":"innospark:gpt-5.4"}
 ```
 
-模型名称统一使用 `provider:model`，例如 `openai:gpt-5.5`。实际可用模型以当前供应商账号和
-OpenMAIC 模型列表为准。
+字段说明：
 
-如果生成模型不支持图片输入，应给视觉检查单独路由一个视觉模型：
+| 变量 | 填写内容 | 作用 |
+| --- | --- | --- |
+| `INNOSPARK_API_KEY` | InnoSpark 控制台生成的密钥 | 服务端调用 InnoSpark |
+| `INNOSPARK_BASE_URL` | `https://api.innospark.cn/v1` | OpenAI 兼容接口根地址，不要追加 `/chat/completions` |
+| `INNOSPARK_MODELS` | 账号可用模型 ID，英文逗号分隔 | 在 OpenMAIC 模型列表中公开这些模型 |
+| `DEFAULT_MODEL` | `provider:model` | 没有浏览器或任务模型时使用的服务端默认模型 |
+| `MODEL_ROUTES` | JSON 对象 | 为指定处理阶段固定模型 |
+
+`courseware-vision-audit` 必须使用支持图片输入的模型。浏览器中的完整自动修复使用当前选中的课程模型修复 slide；批量任务使用该课程在 `config.json` 中填写的 `model`。视觉审查使用 `MODEL_ROUTES.courseware-vision-audit`。
+
+截图路由只能填写模型目录中声明支持图片输入的条目。上述 InnoSpark 配置中，`gpt-5.4-pro`、`gpt-5.4`、Claude、Gemini、`doubao-seed-2-0-pro-260215` 和 `kimi-k2.6` 可用于截图路由；DeepSeek 和代码模型只用于文本任务。
+
+如需把生成和 slide 修复也固定到同一模型，可以增加对应阶段：
 
 ```dotenv
-MODEL_ROUTES={"courseware-vision-audit":"openai:gpt-5.5"}
+MODEL_ROUTES={"scene-content":"innospark:gpt-5.4","scene-actions":"innospark:gpt-5.4","courseware-vision-audit":"innospark:gpt-5.4"}
 ```
 
-路由优先级是：
+设置 `scene-content` 或 `scene-actions` 后，浏览器和批量配置中选择的其他生成模型会被这些路由覆盖。
 
-1. `MODEL_ROUTES` 中对应阶段的模型。
-2. 浏览器或批量任务发送的模型。
-3. `DEFAULT_MODEL`。
+### 3.2 其他模型供应商
 
-因此，批量比较多个生成模型时不要固定 `generate-classroom` 路由；可以只固定
-`courseware-vision-audit`，让所有课件使用同一个视觉审查模型。
-
-指定归档目录：
+供应商变量统一使用以下格式：
 
 ```dotenv
-# Windows 示例
+PROVIDER_API_KEY=your_api_key
+PROVIDER_BASE_URL=https://provider.example/v1
+PROVIDER_MODELS=model-a,model-b
+DEFAULT_MODEL=provider:model-a
+MODEL_ROUTES={"courseware-vision-audit":"provider:vision-model"}
+```
+
+具体变量名前缀和默认地址见 `.env.example`。模型字符串必须包含供应商前缀，例如 `openai:gpt-5.5`、`deepseek:deepseek-v4-pro` 或 `innospark:gpt-5.4`。
+
+### 3.3 课件输出目录
+
+Windows：
+
+```dotenv
 OPENMAIC_COURSEWARE_OUTPUT_DIR=C:\Courseware\OpenMAIC
-
-# Linux/macOS 示例
-# OPENMAIC_COURSEWARE_OUTPUT_DIR=/srv/openmaic/courseware
-
 OPENMAIC_COURSEWARE_GROUP_BY_MODEL=true
 ```
 
-未设置时输出到 `$PROJECT_ROOT/data/courseware-output`。默认按实际生成模型建立子目录：
+Linux 或 macOS：
+
+```dotenv
+OPENMAIC_COURSEWARE_OUTPUT_DIR=/srv/openmaic/courseware
+OPENMAIC_COURSEWARE_GROUP_BY_MODEL=true
+```
+
+| 变量 | 值 | 作用 |
+| --- | --- | --- |
+| `OPENMAIC_COURSEWARE_OUTPUT_DIR` | 绝对路径或相对项目根目录的路径 | 保存最终 `.maic.zip` |
+| `OPENMAIC_COURSEWARE_GROUP_BY_MODEL` | `true` 或 `false` | 是否按模型建立子目录 |
+
+未设置输出目录时，文件保存到 `$PROJECT_ROOT/data/courseware-output`。
+
+输出示例：
 
 ```text
 <output>/
-├── openai_gpt-5.5/
-│   └── 函数极限入门__openai_gpt-5.5__20260715T010203Z.maic.zip
-└── deepseek_deepseek-v4-pro/
-    └── Python循环__deepseek_deepseek-v4-pro__20260715T020304Z.maic.zip
+└── innospark_gpt-5.4/
+    └── 函数极限入门__innospark_gpt-5.4__20260715T010203Z.maic.zip
 ```
 
-设为 `OPENMAIC_COURSEWARE_GROUP_BY_MODEL=false` 可使用单层目录。批量配置里的 `title` 会直接用于
-课堂标题和 ZIP 文件名，不再只是日志标签。
+### 3.4 Pro Mode
 
-## 5. 准备批量目录
+```dotenv
+NEXT_PUBLIC_MAIC_EDITOR_ENABLED=true
+```
 
-推荐结构：
+该变量控制网页中的 Pro Mode 编辑器。修改任何 `NEXT_PUBLIC_*` 变量后必须重新启动服务。
+
+### 3.5 访问码
+
+```dotenv
+ACCESS_CODE=your_access_code
+```
+
+设置后，网页和批量脚本都必须通过访问码验证。批量脚本使用 `OPENMAIC_ACCESS_CODE` 传入同一个值。
+
+## 4. 启动服务
+
+```powershell
+Set-Location C:\path\to\OpenMAIC
+pnpm dev --hostname 127.0.0.1 --port 3000
+```
+
+浏览器打开 `http://127.0.0.1:3000`。修改 `.env.local` 后需要停止并重新启动该命令。
+
+## 5. 网页生成课件
+
+1. 打开设置，启用已经配置的模型供应商并选择课程模型。
+2. 输入课程要求，按需上传 PDF。
+3. 生成课程。
+4. 每个场景生成后，系统执行结构检查和确定性安全修复。
+5. 全部场景和媒体完成后，系统逐页渲染 slide、保存截图并执行多模态检查。
+6. 文字溢出、明确重叠和元素越界先执行不改写内容的确定性几何修复。
+7. 公式、媒体或无法确定处理方式的 slide 问题交给课程模型修复。
+8. 修复后的 slide 会重新渲染、截图和复检；复检发现新的可修复问题时继续修复，最多执行 5 轮。
+9. 结构检查与视觉复检均通过后，系统生成最终 `.maic.zip`。
+
+最终复检仍有严重问题时不会生成成功归档。证据保存在：
+
+```text
+$PROJECT_ROOT/data/courseware-audits/<classroomId>/<timestamp>/
+```
+
+## 6. 导入 `.maic.zip` 后检查和修复
+
+导入操作只把课件及其资源写入本地课堂，不会在导入瞬间调用模型。
+
+1. 在首页点击“导入课堂”，选择 `.maic.zip`。
+2. 打开导入后的课堂。
+3. 确认设置中选中了可用的课程模型。
+4. 点击课堂顶部的盾牌图标，打开“课件检查”。
+5. 点击“完整自检并自动修复”。
+6. 等待结构检查、Playwright 渲染、多模态检查、AI 修复和复检完成。
+7. 检查通过后，点击“下载课件”，或到 `OPENMAIC_COURSEWARE_OUTPUT_DIR` 查看归档。
+
+按钮说明：
+
+| 按钮 | 作用 |
+| --- | --- |
+| 完整自检并自动修复 | 运行完整结构、截图、多模态、修复和复检流程 |
+| 应用安全修复 | 只修复无需模型判断的确定性问题；没有此类问题时按钮禁用 |
+| 在 Pro Mode 修改 | 定位到对应场景并打开编辑模式，不会自动改写内容 |
+| 下载检查报告 | 下载当前结构报告和最近一次视觉报告 |
+| 下载课件 | 导出当前已通过检查的课件 |
+
+## 7. 批量任务目录
 
 ```text
 OpenMAIC/
@@ -172,7 +197,7 @@ OpenMAIC/
 └── .env.local
 ```
 
-Windows：
+创建目录和配置：
 
 ```powershell
 Set-Location C:\path\to\OpenMAIC
@@ -180,55 +205,51 @@ New-Item -ItemType Directory -Force batch\prompts, batch\pdfs | Out-Null
 Copy-Item scripts\courseware-batch.example.json batch\config.json
 ```
 
-Linux/macOS 上仍需安装 PowerShell (`pwsh`) 才能运行本脚本：
+`paths.promptsDir` 和 `paths.pdfDir` 的相对路径以项目根目录为基准，也可以填写绝对路径。
 
-```bash
-cd /path/to/OpenMAIC
-mkdir -p batch/prompts batch/pdfs
-cp scripts/courseware-batch.example.json batch/config.json
-```
+## 8. 提示词文件
 
-`paths.promptsDir` 和 `paths.pdfDir` 的相对路径始终相对于项目根目录，不受当前终端目录或
-`config.json` 所在位置影响。也可以填写绝对路径。
-
-## 6. 提示词文件怎么写
-
-把每门课的生成要求保存为 UTF-8 文本或 Markdown，例如 `batch/prompts/limits.md`：
+提示词文件使用 UTF-8 文本或 Markdown，例如 `batch/prompts/limits.md`：
 
 ```markdown
 面向大学一年级学生生成“函数极限入门”课程，使用简体中文。
 
 要求：
 - 先用直观图像解释趋近，再给出严格定义。
-- 包含至少两个逐步例题和一个常见错误辨析。
+- 包含两个逐步例题和一个常见错误辨析。
 - 最后安排选择题和开放题。
-- 公式必须可读，不能与正文重叠。
+- 公式、图表和正文不能互相遮挡。
 ```
 
-配置中用 `promptFile` 写相对于 `promptsDir` 的文件名。也可以直接使用 `requirement`。两者同时
-存在时会按“内联 requirement + 提示词文件内容”的顺序合并。
+配置中的 `promptFile` 填写相对于 `promptsDir` 的路径。也可以直接填写 `requirement`。两者同时存在时，脚本按“`requirement` + 提示词文件”的顺序合并。
 
-## 7. PDF 放在哪里，页码怎么填
+## 9. PDF 和页码
 
-PDF 默认放在 `batch/pdfs/`，配置里的 `file` 相对于 `paths.pdfDir`。一门课可以有零个、一个或多个
-PDF；脚本会依次解析并把文本和图片合并为同一课程资料。
+PDF 默认放在 `batch/pdfs/`。一门课程可以填写多个 PDF。
 
-支持的页码写法：
+页码格式：
 
-- `"3"`：只使用第 3 页。
-- `"1-10"`：使用第 1 至 10 页，包含首尾。
-- `"1-3,7,10-12"`：组合多个页段。
-- 省略 `pages` 或填空字符串：使用全部页面。
+| 写法 | 含义 |
+| --- | --- |
+| `"3"` | 第 3 页 |
+| `"1-10"` | 第 1 至 10 页，包含首尾 |
+| `"1-3,7,10-12"` | 多个页段 |
+| 省略或空字符串 | 全部页面 |
 
-页码从 1 开始。重复页会自动去重并排序。超出 PDF 页数、倒序范围或非法字符会明确报错。
+页码从 1 开始。超出总页数、倒序范围或非法字符会中止该任务。
 
-`unpdf` 会逐页提取文本和图片，最适合本地、无需 API 的分页。MinerU 和 AliDocMind 只有在供应商
-返回页级文本/布局信息时才能安全分页；如果供应商只返回合并全文，OpenMAIC 会拒绝页码筛选，
-不会悄悄把整本 PDF 当成所选页面。
+支持的 PDF 解析器：
 
-## 8. 完整批量配置
+| `providerId` | 配置方式 |
+| --- | --- |
+| `unpdf` | 本地解析，不需要 API 密钥 |
+| `mineru` | 按 `.env.example` 配置对应地址和密钥 |
+| `mineru-cloud` | 按 `.env.example` 配置云端密钥 |
+| `alidocmind` | 配置 AccessKey ID、AccessKey Secret 和可选 Base URL |
 
-`batch/config.json` 示例：
+只有解析器返回页级结果时才能使用页码筛选。不能可靠分页时，任务会报错，不会用整本 PDF 替代所选页面。
+
+## 10. `batch/config.json`
 
 ```json
 {
@@ -238,7 +259,7 @@ PDF；脚本会依次解析并把文本和图片合并为同一课程资料。
     "pdfDir": "batch/pdfs"
   },
   "defaults": {
-    "model": "openai:gpt-5.5",
+    "model": "innospark:gpt-5.4",
     "pdfProviderId": "unpdf",
     "enableWebSearch": false,
     "enableImageGeneration": false,
@@ -268,76 +289,67 @@ PDF；脚本会依次解析并把文本和图片合并为同一课程资料。
       "title": "Python 循环",
       "model": "deepseek:deepseek-v4-pro",
       "requirement": "面向零基础学习者讲解 Python for 循环，使用简体中文。",
+      "enableVisionAudit": false,
       "pdfs": []
     }
   ]
 }
 ```
 
-常用字段：
+顶层字段：
 
-| 字段 | 位置 | 说明 |
+| 字段 | 是否必填 | 填写内容 |
 | --- | --- | --- |
-| `title` | course | 必填；课堂标题和归档文件名 |
-| `model` | defaults/course | 必填；`provider:model`，课程值覆盖默认值 |
-| `promptFile` | defaults/course | 相对 `promptsDir` 的 UTF-8 文件 |
-| `requirement` | defaults/course | 内联提示词；与 `promptFile` 至少有一个 |
-| `pdfs` | course | PDF 字符串或 PDF 对象数组 |
-| `pdfProviderId` | defaults/course | 默认 `unpdf`；也可在单个 PDF 覆盖 |
-| `pages` | PDF | 页码范围；省略表示全文 |
-| `enableVisionAudit` | defaults/course | `true` 才会调用真实多模态模型 |
-| `enableTTS` | defaults/course | 是否生成讲解音频 |
-| `enableImageGeneration` | defaults/course | 是否生成图片资源 |
-| `enableVideoGeneration` | defaults/course | 是否生成视频资源 |
-| `agentMode` | defaults/course | `default` 或 `generate` |
+| `baseUrl` | 否 | OpenMAIC 服务地址；默认 `http://127.0.0.1:3000` |
+| `paths.promptsDir` | 否 | 提示词目录；默认 `batch/prompts` |
+| `paths.pdfDir` | 否 | PDF 目录；默认 `batch/pdfs` |
+| `defaults` | 否 | 所有课程共用的默认值 |
+| `courses` | 是 | 至少一个课程对象 |
 
-### PDF 解析器和凭据
+课程字段：
 
-支持 `unpdf`、`mineru`、`mineru-cloud`、`alidocmind`。优先在服务端 `.env.local` 或
-`server-providers.yml` 配置解析器；脚本也支持用环境变量名传入未托管解析器的凭据：
+| 字段 | 是否必填 | 填写内容 |
+| --- | --- | --- |
+| `title` | 否 | 课堂标题和归档文件名；省略时使用课程序号 |
+| `model` | 否 | `provider:model`；课程值覆盖 `defaults.model`，两处至少填写一处 |
+| `promptFile` | 至少一项 | 相对于 `promptsDir` 的 UTF-8 文件 |
+| `requirement` | 至少一项 | 内联提示词；可与 `promptFile` 合并 |
+| `pdfs` | 否 | PDF 字符串或 PDF 对象数组 |
+| `pdfProviderId` | 否 | 默认 PDF 解析器；默认 `unpdf` |
+| `enableWebSearch` | 否 | 是否启用联网搜索 |
+| `webSearchProviderId` | 否 | 搜索供应商 ID |
+| `enableImageGeneration` | 否 | 是否生成图片 |
+| `enableVideoGeneration` | 否 | 是否生成视频 |
+| `enableTTS` | 否 | 是否生成讲解音频 |
+| `enableVisionAudit` | 否 | 是否把 Playwright 截图发送给真实多模态模型 |
+| `agentMode` | 否 | `default` 或 `generate` |
 
-```json
-{
-  "file": "paper.pdf",
-  "pages": "2-8",
-  "providerId": "mineru-cloud",
-  "apiKeyEnv": "MINERU_API_KEY",
-  "baseUrl": "https://example-parser.invalid"
-}
-```
+PDF 对象字段：
 
-AliDocMind 可使用 `accessKeyIdEnv` 和 `accessKeySecretEnv`。JSON 中写的是环境变量名称，不是密钥值：
+| 字段 | 是否必填 | 填写内容 |
+| --- | --- | --- |
+| `file` | 是 | 相对于 `pdfDir` 的 PDF 路径，或绝对路径 |
+| `pages` | 否 | 页码或页码范围 |
+| `providerId` | 否 | 覆盖课程的 PDF 解析器 |
+| `baseUrl` | 否 | 覆盖解析器地址 |
+| `apiKeyEnv` | 否 | 保存 API 密钥的环境变量名称，不是密钥本身 |
+| `accessKeyIdEnv` | 否 | AliDocMind AccessKey ID 的环境变量名称 |
+| `accessKeySecretEnv` | 否 | AliDocMind AccessKey Secret 的环境变量名称 |
 
-```json
-{
-  "file": "course.pdf",
-  "providerId": "alidocmind",
-  "accessKeyIdEnv": "ALIDOCMIND_ACCESS_KEY_ID",
-  "accessKeySecretEnv": "ALIDOCMIND_ACCESS_KEY_SECRET"
-}
-```
+## 11. 校验和运行批量任务
 
-PowerShell 中设置当前进程环境变量：
+先启动 OpenMAIC，再打开另一个 PowerShell 窗口。
 
-```powershell
-$env:MINERU_API_KEY = 'your_key'
-$env:ALIDOCMIND_ACCESS_KEY_ID = 'your_id'
-$env:ALIDOCMIND_ACCESS_KEY_SECRET = 'your_secret'
-```
-
-## 9. 校验并运行批量任务
-
-先保持 OpenMAIC 服务运行。另开一个 PowerShell 窗口，在仓库根目录执行只读校验：
+只校验配置，不上传文件、不调用模型：
 
 ```powershell
+Set-Location C:\path\to\OpenMAIC
 .\scripts\batch-generate-courseware.ps1 `
   -ConfigPath .\batch\config.json `
   -ValidateOnly
 ```
 
-校验会检查模型格式、提示词文件、PDF 文件和页码语法，不会上传文件或调用模型。
-
-开始生成：
+开始批量生成：
 
 ```powershell
 .\scripts\batch-generate-courseware.ps1 `
@@ -347,10 +359,18 @@ $env:ALIDOCMIND_ACCESS_KEY_SECRET = 'your_secret'
   -ContinueOnError
 ```
 
-脚本兼容 Windows PowerShell 5.1，不依赖 PowerShell 7 才有的 `Invoke-RestMethod -Form`。任务默认顺序
-执行，避免同时生成大量场景触发 API 限流。去掉 `-ContinueOnError` 后，任一课程失败会停止整个批次。
+参数说明：
 
-站点启用了 `ACCESS_CODE` 时：
+| 参数 | 作用 |
+| --- | --- |
+| `-ConfigPath` | 批量 JSON 配置路径 |
+| `-BaseUrl` | 覆盖 JSON 中的服务地址 |
+| `-PollIntervalSeconds` | 查询任务进度的秒数 |
+| `-TimeoutMinutes` | 单个任务超时时间 |
+| `-ContinueOnError` | 一门课失败后继续下一门；省略时立即停止 |
+| `-ValidateOnly` | 只校验本地配置和文件 |
+
+启用访问码时：
 
 ```powershell
 $env:OPENMAIC_ACCESS_CODE = 'your_access_code'
@@ -358,12 +378,9 @@ $env:OPENMAIC_ACCESS_CODE = 'your_access_code'
 Remove-Item Env:OPENMAIC_ACCESS_CODE
 ```
 
-也可用 `-BaseUrl https://your-openmaic.example` 连接远程部署。PDF、提示词和课件内容会发送到该部署，
-使用远程服务前应确认数据合规和上传限制。
+## 12. 输出文件
 
-## 10. 产物和失败证据
-
-成功 ZIP 包含：
+通过最终检查的 ZIP 包含：
 
 - `manifest.json`
 - `classroom.json`
@@ -372,62 +389,54 @@ Remove-Item Env:OPENMAIC_ACCESS_CODE
 - `screenshots/`
 - 存在资源时的 `media/` 和 `audio/`
 
-未通过最终检查时不会生成成功 ZIP。结构报告、两轮视觉报告、截图和修复失败信息保存在：
+检查过程证据：
 
 ```text
 $PROJECT_ROOT/data/courseware-audits/<classroomId>/<timestamp>/
+├── courseware-guard-report.json
+├── courseware-visual-report-pass-1.json
+├── courseware-visual-report-pass-2.json
+├── ...
+├── courseware-visual-report-pass-6.json
+├── courseware-visual-report.json
+├── screenshots/
+├── screenshots-repaired/
+├── screenshots-repaired-pass-2/
+├── ...
+├── screenshots-repaired-pass-5/
+└── courseware-repair-failures.json
 ```
 
-课堂草稿保存在 `data/classrooms/<classroomId>`，可以用任务输出的课堂 ID 打开网页继续修改。
+只有实际发生修复时才会生成 `screenshots-repaired/`。第二轮及后续修复会生成带轮次编号的目录；只有修复调用失败时才会生成 `courseware-repair-failures.json`。
 
-## 11. Page Agent、Stagehand 和其他浏览器 Agent
+## 13. 当前检查范围
 
-### alibaba/page-agent
+| 内容 | 结构检查 | Playwright 截图检查 | 多模态检查 | 自动修复 |
+| --- | --- | --- | --- | --- |
+| Slide | 是 | 是 | 是 | 确定性安全修复和 AI 修复 |
+| Quiz | 是 | 否 | 否 | 仅修复可确定的 ID 等字段 |
+| Interactive | 基础结构和危险 URL | 否 | 否 | 仅确定性安全修复 |
+| PBL | 基础结构 | 否 | 否 | 否 |
 
-[Page Agent](https://github.com/alibaba/page-agent) 的定位是页面内 GUI Agent。其公开说明强调基于文本 DOM、
-不使用截图和多模态模型。它适合增加“用自然语言操作当前网页”的产品能力，但看不到真实像素，不能可靠
-发现遮挡、渲染重叠、低对比度或公式外观损坏，因此不适合作为课件视觉质检核心。
+Quiz 结构检查包括：题目是否存在、题目对象、题目 ID、题干、选择题选项数量，以及答案值是否存在于选项中。当前版本不会用大模型判断答案是否正确，也不会自动重写题干、选项或答案。
 
-### browserbase/stagehand
+Playwright 负责真实浏览器渲染、DOM 尺寸、文字溢出、明显重叠、资源失败、控制台错误和页面截图。开启 `enableVisionAudit` 后，截图会发送给多模态模型检查裁切、遮挡、对比度、可读性、公式或媒体外观、重复内容和视觉层次。
 
-[Stagehand](https://github.com/browserbase/stagehand) 适合把代码和自然语言浏览器操作结合起来，可用于后续
-增加“像学生一样翻页、滚动、答题、点击互动控件、检查按钮是否可用”的端到端巡检。它可以作为
-Playwright 上层的可选用户流程检查器，但不能替代当前的结构规则、DOM 测量和多模态截图审查。
+多模态报告中的 `semantic_confusion` 统一记为需人工确认的警告，不会自动改写 slide，也不会单独阻止归档。发布前在最终截图中确认这些警告；其他严重视觉问题会阻止归档。
 
-推荐的长期架构是：
+## 14. 故障处理
 
-1. TypeScript/DSL 确定性规则。
-2. Playwright DOM、资源和运行时检查。
-3. 多模态模型审查真实截图。
-4. 现有课件编辑模型修复。
-5. 重新渲染复检。
-6. Stagehand 可选执行学生端完整操作流程。
-7. 人工抽检高风险课程。
+### 修改 `.env.local` 后没有生效
 
-当前版本没有引入 Page Agent 或 Stagehand 依赖，避免为了一个可选层改变现有 Pro Mode 和编辑器架构。
+停止并重新启动 `pnpm dev`。
 
-## 12. 常见问题
+### InnoSpark 不出现在模型设置中
 
-### 导入课件后为什么以前不能自动修复
+确认 `INNOSPARK_API_KEY` 非空，`INNOSPARK_BASE_URL` 以 `/v1` 结尾，并重新启动服务。
 
-旧入口只运行本地结构规则并跳转 Pro Mode，没有调用最终检查 API；同时非法几何等结构错误没有进入
-AI 修复集合。当前“完整自检并自动修复”已接入完整流水线，导入课件不需要先重新生成。
+### 提示模型不支持视觉
 
-### 为什么“应用安全修复”还是灰色
-
-它只处理确定性问题。非法高度只能确定“错了”，不能仅靠规则知道应改成多少，因此要使用“完整自检并
-自动修复”或 Pro Mode。禁用状态不代表完整自动修复不可用。
-
-### 多模态检查提示模型不支持视觉
-
-当前课程模型的 `capabilities.vision` 不是 `true`。改用支持图片输入的模型，或设置：
-
-```dotenv
-MODEL_ROUTES={"courseware-vision-audit":"openai:gpt-5.5"}
-```
-
-如果明确只需要规则和 Playwright 检查，可在批量配置设 `"enableVisionAudit": false`，但这不再是
-真实大模型截图审查。
+把 `MODEL_ROUTES.courseware-vision-audit` 改为声明支持图片输入的模型，然后重新启动服务。
 
 ### Playwright 或 Chromium 启动失败
 
@@ -435,26 +444,32 @@ MODEL_ROUTES={"courseware-vision-audit":"openai:gpt-5.5"}
 pnpm exec playwright install chromium
 ```
 
-Linux 服务器可能还需要 Playwright 系统依赖，按 Playwright 官方文档使用适合该发行版的安装命令。
+Linux 服务器还需要安装 Chromium 所需的系统依赖。
+
+### “应用安全修复”按钮禁用
+
+当前报告中没有可由确定性规则直接修复的问题。使用“完整自检并自动修复”处理需要模型判断的 slide 问题。
+
+### 导入后没有自动开始检查
+
+导入与完整检查是两个步骤。打开课堂的盾牌菜单，点击“完整自检并自动修复”。
+
+### 完整检查失败但页面内容已经变化
+
+服务端会返回已完成的修复结果并保存报告。查看错误消息中的 `Evidence` 目录和 `courseware-visual-report.json`，再使用 Pro Mode 处理剩余问题。
+
+### 生成完成但输出目录没有 ZIP
+
+结构检查或视觉复检仍有严重问题时不会归档。查看 `data/courseware-audits` 下对应课堂的最新证据目录。
 
 ### 页码范围被拒绝
 
-先确认页码没有超过 PDF 总页数。若错误提示解析器没有返回 page-level text，改用 `unpdf`，或选择能
-返回页级布局信息的 MinerU/AliDocMind 配置。系统不会对无法可靠分页的结果静默使用全文。
-
-### 生成完成但没有 ZIP
-
-查看任务错误和 `data/courseware-audits`。只要结构或视觉复检仍有严重问题，系统就会阻止归档。
-
-### 修改 `.env.local` 后没有生效
-
-停止并重新启动 `pnpm dev`。模型路由、输出目录和 `NEXT_PUBLIC_*` 设置都在启动时读取。
+确认范围未超过 PDF 总页数。解析器不能返回页级结果时改用 `unpdf`，或取消 `pages` 使用全文。
 
 ### 批量任务返回 401
 
-站点启用了访问码。设置 `OPENMAIC_ACCESS_CODE`，并确认它与服务端 `ACCESS_CODE` 一致。
+服务端启用了 `ACCESS_CODE`。设置相同的 `OPENMAIC_ACCESS_CODE` 后重新运行脚本。
 
-### 多模态检查的成本为什么明显增加
+### 批量任务触发 429
 
-每张幻灯片至少调用一次视觉模型；发生修复时还会再截图并复检。可用较便宜但可靠的视觉模型单独配置
-`courseware-vision-audit` 路由。降低成本时不要关闭最终复检，否则无法确认修复是否真的生效。
+脚本按课程顺序执行。等待供应商限流窗口恢复后重试失败课程。
