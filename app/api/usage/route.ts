@@ -78,6 +78,7 @@ export async function GET(req: NextRequest) {
     const byModel = new Map<string, Bucket>();
     const byDay = new Map<string, Bucket>();
     const byKind = new Map<UsageKind, Bucket>();
+    const bySource = new Map<string, Bucket>();
     let totalRequests = 0;
     let totalLlmTokens = 0;
 
@@ -97,6 +98,11 @@ export async function GET(req: NextRequest) {
 
       if (!byKind.has(r.kind)) byKind.set(r.kind, emptyBucket(r.kind, r.kind, unitOf(r)));
       addTo(byKind.get(r.kind)!, r);
+
+      if (!bySource.has(r.source)) {
+        bySource.set(r.source, emptyBucket(r.source, r.kind, unitOf(r)));
+      }
+      addTo(bySource.get(r.source)!, r);
     }
 
     return apiSuccess({
@@ -104,6 +110,7 @@ export async function GET(req: NextRequest) {
       byModel: [...byModel.values()].sort((a, b) => b.requests - a.requests),
       byDay: [...byDay.values()].sort((a, b) => a.key.localeCompare(b.key)),
       byKind: [...byKind.values()],
+      bySource: [...bySource.values()].sort((a, b) => b.totalTokens - a.totalTokens),
     });
   } catch (error) {
     log.error('Usage aggregation failed:', error);

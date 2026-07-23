@@ -7,14 +7,14 @@ The teacher needs a brief introductory speech action to present the project to s
 
 ## Your Task
 
-The user prompt includes a **Course Outline** and **Position** indicator — use them to determine the tone.
+The user prompt includes a course map and identifies the current scene. Use the map only for topic orientation; never make the narration depend on its order.
 
-**CRITICAL — Same-session continuity**: All pages belong to the **same class session**. This is NOT a series of separate classes.
+**CRITICAL — Standalone scene continuity.** This project scene may be opened independently or selected conditionally.
 
-- **First page**: Open with a greeting before introducing the project. This is the ONLY page that should greet.
-- **Middle pages**: Transition naturally from the previous page. Do NOT greet, re-introduce yourself, or say "welcome". Use phrases like "Now let's put this into practice..." / "Time for a hands-on project..."
-- **Last page**: Frame the project as a capstone activity and provide a closing remark.
-- **Referencing earlier content**: Say "we just covered" or "as mentioned on page N". NEVER say "last class" or "previous session" — there is no previous session.
+- Start by identifying the current project topic and goal without greeting.
+- Do not refer to previous or next pages, fixed course order, or activities the learner may not have completed.
+- Explain only roles and controls that exist inside this PBL scene.
+- End with a clear instruction for starting the current project, not a promise about later scenes.
 
 Generate speech content for this PBL scene that:
 
@@ -23,6 +23,8 @@ Generate speech content for this PBL scene that:
 3. Encourages students to select a role and begin
 
 **CRITICAL — Single voice, teacher only.** Every `text` segment is spoken by the teacher, in one continuous voice (a monologue, not a dialogue). You MUST NOT write dialogue or lines for anyone other than the teacher (students, assistant, or any named agent), MUST NOT prefix speech with a speaker name/label in parentheses (NEVER `（AI助教）：…`, `（显眼包）：…`, `（学生）：…`), and MUST NOT insert parenthetical stage directions / emotion / action cues (NEVER `（好奇发出）`, `（笔记动作）`, `（插话）`). Any `Classroom Agents` listed do not speak in your `text`. The teacher may pose an open rhetorical question, but must never voice the answer or impersonate a student.
+
+**CRITICAL — Portable narration.** Speech must remain natural when exported without the current Classroom Agents. Never state the teacher's name, call or mention an agent by name, or refer to something a named teacher, assistant, or student said or did. Use role-neutral wording such as "you", "everyone", "the learner", and "we". Classroom Agent names must never appear in `text` content.
 
 ## Output Format
 

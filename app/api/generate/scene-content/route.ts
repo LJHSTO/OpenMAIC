@@ -26,6 +26,11 @@ import { llmApiError } from '@/lib/server/llm-error-response';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 import { resolveVocationalActive } from '@/lib/config/feature-flags';
 import { sortDocumentImagesForVision } from '@/lib/document/bundle';
+import {
+  createSceneModelAbortSignal,
+  resolveSceneContentOutputTokens,
+  resolveSceneContentTimeoutMs,
+} from '@/lib/generation/scene-generation-policy';
 
 const log = createLogger('Scene Content API');
 
@@ -94,6 +99,11 @@ export async function POST(req: NextRequest) {
 
     // Detect vision capability
     const hasVision = !!modelInfo?.capabilities?.vision;
+    const abortSignal = createSceneModelAbortSignal(
+      req.signal,
+      resolveSceneContentTimeoutMs(outline.type),
+    );
+    const maxOutputTokens = resolveSceneContentOutputTokens(outline.type, modelInfo?.outputWindow);
 
     // Vision-aware AI call function
     const aiCall = async (
@@ -112,8 +122,9 @@ export async function POST(req: NextRequest) {
                 content: buildVisionUserContent(userPrompt, images),
               },
             ],
-            maxOutputTokens: modelInfo?.outputWindow,
+            maxOutputTokens,
             maxRetries: 0,
+            abortSignal,
           },
           'scene-content',
           undefined,
@@ -126,8 +137,9 @@ export async function POST(req: NextRequest) {
           model: languageModel,
           system: systemPrompt,
           prompt: userPrompt,
-          maxOutputTokens: modelInfo?.outputWindow,
+          maxOutputTokens,
           maxRetries: 0,
+          abortSignal,
         },
         'scene-content',
         undefined,

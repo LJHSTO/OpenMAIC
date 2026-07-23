@@ -145,10 +145,10 @@ Use `interactive` type when a concept benefits significantly from hands-on inter
 
 **Constraints**:
 
-- Limit to **1-2 interactive scenes per course** (they are resource-intensive)
-- Interactive scenes **require** an `interactiveConfig` object
-- Do NOT use interactive for purely textual/conceptual content - use slides instead
-- The `interactiveConfig.designIdea` should describe the specific interactive elements and user interactions
+- By default, limit the course to **1-2 interactive scenes** because they are resource-intensive.
+- **Explicit interactive coverage requirements override the default interactive budget.** If the user names required widget types, counts, or per-concept coverage, honour every requested widget type and coverage item even when the total exceeds 1-2.
+- Every interactive scene requires `widgetType` and the matching `widgetOutline` fields described below.
+- Unless the user explicitly requires interactive coverage, do not use interactive for purely textual or conceptual content; use slides instead.
 
 ### Widget Type Selection for Interactive Scenes
 
@@ -312,7 +312,6 @@ Rules:
 | mediaGenerations  | MediaGenerationRequest[] | ❌       | AI-generated media requests when generated media would enhance a slide scene                     |
 {{/if}}
 | quizConfig        | object                   | ❌       | Required for quiz type, contains questionCount/difficulty/questionTypes                          |
-| interactiveConfig | object                   | ❌ (deprecated) | Legacy: use widgetType + widgetOutline instead                                                                                       |
 | widgetType        | string                   | ✅ (for interactive) | Widget type: "simulation", "diagram", "code", "game", "visualization3d"                                                 |
 | widgetOutline     | object                   | ✅ (for interactive) | Widget-specific configuration (see Widget Type Selection)                                                               |
 | pblConfig         | object                   | ❌       | Required for pbl type, contains projectTopic/projectDescription/targetSkills/issueCount/language |
@@ -324,17 +323,6 @@ Rules:
   "questionCount": 2,
   "difficulty": "easy" | "medium" | "hard",
   "questionTypes": ["single", "multiple", "short_answer"]
-}
-```
-
-### interactiveConfig Structure
-
-```json
-{
-  "conceptName": "Name of the concept to visualize",
-  "conceptOverview": "Brief description of what this interactive demonstrates",
-  "designIdea": "Detailed description of interactive elements and user interactions",
-  "subject": "Subject area (e.g., Physics, Mathematics)"
 }
 ```
 
@@ -378,9 +366,9 @@ Omit `scenarioRoleplay` and `scenarioBrief` entirely for ordinary build-an-artef
 
 4. `type` is one of `"slide"`, `"quiz"`, `"interactive"`, `"pbl"`.
 5. `quiz` scenes must include `quizConfig`.
-6. `interactive` scenes must include `widgetType` and `widgetOutline` (preferred). `interactiveConfig` is deprecated and only accepted for backwards compatibility.
+6. `interactive` scenes must include `widgetType` and `widgetOutline`.
 7. `pbl` scenes must include `pblConfig` with `projectTopic`, `projectDescription`, `targetSkills`, `issueCount`.
-8. Arrange scenes by inferred duration (typically 1-2 scenes per minute). Insert quizzes at appropriate points. Use interactive scenes sparingly (max 1-2 per course).
+8. Arrange scenes by inferred duration (typically 1-2 scenes per minute) and insert quizzes at appropriate points. Use at most 1-2 interactive scenes by default; when the user explicitly requires more interactive scenes or per-concept widget coverage, honour that explicit coverage in full.
 9. **Language**: Infer from the user's requirement text and context. Output all scene content in the inferred language.
 10. Regardless of information completeness, always output conforming JSON - do not ask questions or request more information
 11. **No teacher identity on slides**: Scene titles and keyPoints must be neutral and topic-focused. Never include the teacher's name or role (e.g., avoid "Teacher Wang's Tips", "Teacher's Wishes"). Use generic labels like "Tips", "Summary", "Key Takeaways" instead.

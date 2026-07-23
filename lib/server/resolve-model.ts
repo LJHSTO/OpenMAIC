@@ -41,9 +41,10 @@ export async function resolveModel(params: {
   modelString?: string;
   /**
    * Optional generation stage (a `callLLM` source label, e.g. 'scene-content').
-   * When set and a route is configured via `MODEL_ROUTES`, the route wins for
-   * this call — even over a client-sent `modelString` (x-model). Unrouted
-   * stages fall back to `modelString` then `DEFAULT_MODEL`. See
+   * When set and a fine-grained or high-level route is configured via
+   * `MODEL_ROUTES`, the route wins for this call — even over a client-sent
+   * `modelString` (x-model). Unrouted stages fall back to `modelString` then
+   * `DEFAULT_MODEL`. See
    * lib/server/model-routes.ts.
    */
   stage?: LlmStage;
@@ -52,7 +53,7 @@ export async function resolveModel(params: {
   providerType?: string;
   thinkingConfig?: ThinkingConfig;
 }): Promise<ResolvedModel> {
-  // Resolution order: stage route > x-model > DEFAULT_MODEL.
+  // Resolution order: exact/base stage route > stage-group route > x-model > DEFAULT_MODEL.
   // A configured stage route is the operator's deliberate per-stage choice and
   // wins even over a client-sent x-model (otherwise the browser UI, which always
   // sends its saved model, would shadow every route). Unrouted stages fall back

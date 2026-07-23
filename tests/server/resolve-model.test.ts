@@ -63,6 +63,19 @@ describe('resolveModel — per-stage resolution order', () => {
     expect(r.modelString).toBe('openai:gpt-5.4');
   });
 
+  it('uses a high-level course generation route over x-model and DEFAULT_MODEL', async () => {
+    process.env.DEFAULT_MODEL = 'openai:gpt-5.4-mini';
+    process.env.MODEL_ROUTES = JSON.stringify({
+      'course-generation': 'siliconflow:zai-org/GLM-5.2',
+    });
+    const { resolveModel } = await import('@/lib/server/resolve-model');
+    const r = await resolveModel({
+      stage: 'scene-content:slide',
+      modelString: 'anthropic:claude-sonnet-4',
+    });
+    expect(r.modelString).toBe('siliconflow:zai-org/GLM-5.2');
+  });
+
   it('uses DEFAULT_MODEL for stages not listed in MODEL_ROUTES', async () => {
     process.env.DEFAULT_MODEL = 'openai:gpt-5.4-mini';
     process.env.MODEL_ROUTES = JSON.stringify({ 'scene-content': 'openai:gpt-5.4' });

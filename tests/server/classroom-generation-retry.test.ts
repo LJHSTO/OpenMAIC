@@ -73,7 +73,11 @@ const slideContent = {
 };
 
 async function generateWithProgress(
-  input: { requirement: string; model?: string } = {
+  input: {
+    requirement: string;
+    model?: string;
+    pdfContent?: { text: string; images: string[] };
+  } = {
     requirement: 'Teach retry basics',
   },
 ) {
@@ -202,6 +206,74 @@ describe('classroom scene generation retries', () => {
       stage: 'generate-classroom',
       modelString: 'openai:gpt-5.5',
     });
+  });
+
+  it('forwards batch PDF images through the same vision path used by browser generation', async () => {
+    const image = 'data:image/png;base64,c291cmNl';
+    mocks.resolveModel.mockResolvedValue({
+      model: { id: 'vision-model' },
+      modelInfo: { outputWindow: 16_384, capabilities: { vision: true } },
+      modelString: 'test:vision-model',
+      providerId: 'test',
+      apiKey: '',
+    });
+    mocks.generateSceneOutlinesFromRequirements.mockImplementation(
+      async (_requirements, _pdfText, pdfImages, aiCall, options) => {
+        expect(pdfImages).toEqual([
+          expect.objectContaining({ id: 'img_1', src: image, pageNumber: 0 }),
+        ]);
+        expect(options).toEqual(
+          expect.objectContaining({
+            visionEnabled: true,
+            imageMapping: { img_1: image },
+          }),
+        );
+        await aiCall('outline system', 'outline user', [{ id: 'img_1', src: image }]);
+        return {
+          success: true,
+          data: {
+            languageDirective: 'Use English.',
+            outlines: [{ ...outline, suggestedImageIds: ['img_1'] }],
+          },
+        };
+      },
+    );
+    mocks.generateSceneContent.mockResolvedValue(slideContent);
+
+    await generateWithProgress({
+      requirement: 'Teach retry basics',
+      pdfContent: { text: 'Source text', images: [image] },
+    });
+
+    expect(mocks.callLLM).toHaveBeenCalledWith(
+      expect.objectContaining({
+        system: 'outline system',
+        messages: [
+          expect.objectContaining({
+            role: 'user',
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                type: 'image',
+                image: 'c291cmNl',
+                mimeType: 'image/png',
+              }),
+            ]),
+          }),
+        ],
+      }),
+      'generate-classroom',
+      undefined,
+      undefined,
+    );
+    expect(mocks.generateSceneContent).toHaveBeenCalledWith(
+      expect.objectContaining({ suggestedImageIds: ['img_1'] }),
+      expect.any(Function),
+      expect.objectContaining({
+        assignedImages: [expect.objectContaining({ id: 'img_1', src: image })],
+        imageMapping: { img_1: image },
+        visionEnabled: true,
+      }),
+    );
   });
 
   it('retries retryable action generation errors', async () => {

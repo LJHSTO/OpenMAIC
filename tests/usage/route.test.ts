@@ -37,5 +37,8 @@ describe('GET /api/usage', () => {
     expect(body.byModel[0].totalTokens).toBe(120);
     expect(body.byModel[0].cacheReadTokens).toBe(30);
     expect(body.byModel[0].cacheCreationTokens).toBe(10);
+    expect(body.bySource).toEqual([
+      expect.objectContaining({ key: 'chat', requests: 1, totalTokens: 120 }),
+    ]);
   });
 });

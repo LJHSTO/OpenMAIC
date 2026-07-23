@@ -11,6 +11,14 @@ type Box = {
 };
 
 const CONTENT_SENSITIVE_TYPES = new Set(['text', 'table', 'chart', 'latex', 'code']);
+const BITMAP_REBUILD_CATEGORIES = new Set([
+  'broken_media',
+  'legibility',
+  'contrast',
+  'semantic_confusion',
+  'visual_hierarchy',
+  'duplicate_content',
+]);
 const ELEMENT_GAP = 8;
 
 function asBox(element: unknown): Box | null {
@@ -157,6 +165,20 @@ function clampElementsToCanvas(
   return changed;
 }
 
+function removeFlaggedBitmaps(elements: unknown[], elementIds: string[]): boolean {
+  const ids = new Set(elementIds);
+  let changed = false;
+  for (let index = elements.length - 1; index >= 0; index -= 1) {
+    const element = elements[index];
+    if (!element || typeof element !== 'object') continue;
+    const record = element as Record<string, unknown>;
+    if (record.type !== 'image' || typeof record.id !== 'string' || !ids.has(record.id)) continue;
+    elements.splice(index, 1);
+    changed = true;
+  }
+  return changed;
+}
+
 export function applyDeterministicVisualRepairs(
   scene: Scene,
   issues: VisualAuditIssue[],
@@ -171,6 +193,7 @@ export function applyDeterministicVisualRepairs(
   const canvasWidth = canvas.viewportSize;
   const canvasHeight = canvas.viewportSize * canvas.viewportRatio;
   const handledIssueIds: string[] = [];
+  let sceneChanged = false;
 
   for (const issue of issues) {
     const elementIds = issue.elementIds ?? [];
@@ -181,11 +204,18 @@ export function applyDeterministicVisualRepairs(
       handled = expandOverflowingText(canvas.elements, elementIds, canvasHeight);
     } else if (issue.code === 'element_out_of_bounds') {
       handled = clampElementsToCanvas(canvas.elements, elementIds, canvasWidth, canvasHeight);
+    } else if (
+      issue.code === 'vision_issue' &&
+      !!issue.category &&
+      BITMAP_REBUILD_CATEGORIES.has(issue.category)
+    ) {
+      sceneChanged = removeFlaggedBitmaps(canvas.elements, elementIds) || sceneChanged;
     }
-    if (handled) handledIssueIds.push(issue.id);
+    if (handled) {
+      handledIssueIds.push(issue.id);
+      sceneChanged = true;
+    }
   }
 
-  return handledIssueIds.length > 0
-    ? { scene: repaired, handledIssueIds }
-    : { scene, handledIssueIds };
+  return sceneChanged ? { scene: repaired, handledIssueIds } : { scene, handledIssueIds };
 }

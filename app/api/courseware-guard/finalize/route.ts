@@ -1,4 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import {
+  resolveCoursewareAuditPolicy,
+  type CoursewareAuditProfile,
+} from '@/lib/courseware-guard/audit-policy';
 import { buildRequestOrigin } from '@/lib/server/classroom-storage';
 import { CoursewareValidationError, finalizeCourseware } from '@/lib/server/finalize-courseware';
 import type { Scene, Stage } from '@/lib/types/stage';
@@ -23,6 +27,8 @@ interface FinalizeRequestBody {
   outlines?: SceneOutline[];
   enableTTS?: boolean;
   enableVisionAudit?: boolean;
+  strictVisualSemantics?: boolean;
+  auditProfile?: CoursewareAuditProfile;
 }
 
 function hasMissingSpeechAudio(scene: Scene): boolean {
@@ -38,14 +44,20 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+    const auditPolicy = resolveCoursewareAuditPolicy({
+      profile: body.auditProfile,
+      enableVisionAudit: body.enableVisionAudit,
+      strictVisualSemantics: body.strictVisualSemantics,
+    });
 
     const stageCache = new Map<LlmStage, Awaited<ReturnType<typeof resolveModelFromRequest>>>();
     const repairAiCall = async (
-      repairStage: LlmStage,
+      _repairStage: LlmStage,
       systemPrompt: string,
       userPrompt: string,
       signal?: AbortSignal,
     ): Promise<string> => {
+      const repairStage: LlmStage = 'courseware-guard-repair';
       let resolved = stageCache.get(repairStage);
       if (!resolved) {
         resolved = await resolveModelFromRequest(
@@ -70,7 +82,7 @@ export async function POST(request: NextRequest) {
       return response.text;
     };
 
-    const reviewScreenshot = body.enableVisionAudit
+    const reviewScreenshot = auditPolicy.enableVisionAudit
       ? async (input: { scene: Scene; screenshotPath: string }) => {
           let resolved = stageCache.get('courseware-vision-audit');
           if (!resolved) {
@@ -88,13 +100,18 @@ export async function POST(request: NextRequest) {
           }
           return reviewCoursewareScreenshot({
             ...input,
+            cacheNamespace: resolved.modelString,
+            enableCache: auditPolicy.enableVisionCache,
             callVisionModel: async (systemPrompt, userContent) => {
               const response = await callLLM(
                 {
                   model: resolved!.model,
                   system: systemPrompt,
                   messages: [{ role: 'user', content: userContent }],
-                  maxOutputTokens: Math.min(resolved!.modelInfo?.outputWindow ?? 4096, 4096),
+                  maxOutputTokens: Math.min(
+                    resolved!.modelInfo?.outputWindow ?? auditPolicy.maxVisionOutputTokens,
+                    auditPolicy.maxVisionOutputTokens,
+                  ),
                 },
                 'courseware-vision-audit',
                 undefined,
@@ -109,11 +126,20 @@ export async function POST(request: NextRequest) {
     const finalized = await finalizeCourseware({
       stage: body.stage,
       scenes: body.scenes,
+      outlines: body.outlines,
       model: body.model?.trim() || 'unknown-model',
       baseUrl: buildRequestOrigin(request),
       reviewScreenshot,
+      regenerateNarrationAudio: body.enableTTS
+        ? async (scenes) => {
+            await generateTTSForClassroom(scenes, body.stage!.id, buildRequestOrigin(request));
+            if (scenes.some(hasMissingSpeechAudio)) {
+              throw new Error('Portable narration repair could not regenerate all audio');
+            }
+          }
+        : undefined,
       repairScene: async (scene, instruction, repairContext) => {
-        const repaired = await repairCoursewareScene({
+        return repairCoursewareScene({
           stage: body.stage!,
           scene,
           scenes: body.scenes!,
@@ -122,21 +148,19 @@ export async function POST(request: NextRequest) {
           ...repairContext,
           aiCall: repairAiCall,
         });
-        if (repaired && body.enableTTS) {
-          await generateTTSForClassroom([repaired], body.stage!.id, buildRequestOrigin(request));
-          if (hasMissingSpeechAudio(repaired)) {
-            throw new Error('Automatic slide repair could not regenerate all narration audio');
-          }
-        }
-        return repaired;
       },
+      strictVisualSemantics: auditPolicy.strictVisualSemantics,
+      auditPolicy,
     });
     return NextResponse.json({
       success: true,
       stage: finalized.stage,
       scenes: finalized.scenes,
       guardReport: finalized.guardReport,
+      knowledgeReport: finalized.knowledgeReport,
+      resourceReport: finalized.resourceReport,
       visualReport: finalized.visualReport,
+      interactiveReport: finalized.interactiveReport,
       archive: finalized.archive,
       url: finalized.url,
     });
@@ -147,7 +171,10 @@ export async function POST(request: NextRequest) {
           success: false,
           error: error.message,
           guardReport: error.guardReport,
+          knowledgeReport: error.knowledgeReport,
+          resourceReport: error.resourceReport,
           visualReport: error.visualReport,
+          interactiveReport: error.interactiveReport,
           evidenceDir: error.evidenceDir,
           stage: error.stage,
           scenes: error.scenes,

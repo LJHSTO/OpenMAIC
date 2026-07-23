@@ -32,6 +32,30 @@ export const parseSvgPath = (d: string) => {
 
 export type SvgPath = ReturnType<typeof parseSvgPath>;
 
+interface SvgPoint {
+  x?: number;
+  y?: number;
+  curve?: {
+    type: 'cubic' | 'quadratic';
+    x1: number;
+    y1: number;
+    x2?: number;
+    y2?: number;
+  };
+  relative?: boolean;
+  type?: string;
+  close?: boolean;
+}
+
+interface CubicBezierPoint {
+  x: number;
+  y: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
 /**
  * 解析SVG路径，并将圆弧（A）类型的路径转为三次贝塞尔（C）类型的路径
  * @param d SVG path d属性
@@ -50,7 +74,7 @@ export const toPoints = (d: string) => {
     return [];
   }
 
-  const points = [];
+  const points: SvgPoint[] = [];
   for (const item of pathData.commands) {
     const type = typeMap[item.type];
 
@@ -89,14 +113,14 @@ export const toPoints = (d: string) => {
         type,
       });
     } else if (item.type === 512) {
-      const lastPoint = points[points.length - 1];
+      const lastPoint: SvgPoint | undefined = points[points.length - 1];
       // An arc may appear before any anchor point (e.g. a path that starts with
       // "A", or one whose leading commands push no point). Without `lastPoint`
       // there is nothing to arc from, so skip it instead of throwing — this keeps
       // the documented "malformed path returns []" contract.
-      if (!lastPoint || !['M', 'L', 'Q', 'C'].includes(lastPoint.type)) continue;
+      if (!lastPoint?.type || !['M', 'L', 'Q', 'C'].includes(lastPoint.type)) continue;
 
-      const cubicBezierPoints = arcToBezier({
+      const cubicBezierPoints: CubicBezierPoint[] = arcToBezier({
         px: lastPoint.x as number,
         py: lastPoint.y as number,
         cx: item.x,

@@ -19,6 +19,7 @@ import { collectAudioFiles, collectMediaFiles, actionsToManifest } from './class
 import type { SpeechAction } from '@/lib/types/action';
 import { createLogger } from '@/lib/logger';
 import { guardCourseware } from '@/lib/courseware-guard';
+import { ensureCurrentCoursewareFinalized } from '@/lib/courseware-guard/finalize-client';
 import {
   inlineHtmlAssets,
   createAssetFetcher,
@@ -47,23 +48,29 @@ export function useExportClassroom() {
   const { t } = useI18n();
 
   const exportClassroomZip = useCallback(async () => {
-    const current = useStageStore.getState();
-    if (!current.stage?.id || current.scenes.length === 0) return;
-
-    const guarded = guardCourseware(
-      { stage: current.stage, scenes: current.scenes },
-      { mode: 'safe-fix' },
-    );
-    if (!guarded.report.publishable) {
-      toast.error(t('coursewareGuard.exportBlocked', { count: guarded.report.counts.critical }));
-      return;
-    }
-    const { stage, scenes } = guarded.bundle;
-
     setExporting(true);
     const toastId = toast.loading(t('export.exporting'));
 
     try {
+      await ensureCurrentCoursewareFinalized({
+        auditProfile: 'balanced',
+        enableVisionAudit: true,
+      });
+      const current = useStageStore.getState();
+      if (!current.stage?.id || current.scenes.length === 0) {
+        throw new Error('Cannot export an empty classroom');
+      }
+      const guarded = guardCourseware(
+        { stage: current.stage, scenes: current.scenes },
+        { mode: 'inspect', contentPolicy: 'strict' },
+      );
+      if (!guarded.report.publishable) {
+        toast.error(t('coursewareGuard.exportBlocked', { count: guarded.report.counts.critical }), {
+          id: toastId,
+        });
+        return;
+      }
+      const { stage, scenes } = guarded.bundle;
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
       const documentScenes = await preparePBLScenesForDocumentPersistence(stage.id, scenes);

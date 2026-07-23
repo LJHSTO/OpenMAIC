@@ -51,6 +51,7 @@ import type {
   GeneratedSlideData,
   AICallFn,
 } from './pipeline-types';
+import { sanitizePortableSpeech } from './portable-speech';
 import type { ThinkingConfig } from '@/lib/types/provider';
 import { createLogger } from '@/lib/logger';
 const log = createLogger('Generation');
@@ -1540,7 +1541,10 @@ export async function generateSceneActions(
 
     if (actions.length > 0) {
       // Validate and fill in Action IDs
-      return processActions(actions, content.elements, agents);
+      return processActions(actions, content.elements, agents, {
+        sceneTitle: outline.title,
+        sceneType: outline.type,
+      });
     }
 
     return generateDefaultSlideActions(outline, content.elements);
@@ -1568,7 +1572,10 @@ export async function generateSceneActions(
     const actions = parseActionsFromStructuredOutput(response, outline.type);
 
     if (actions.length > 0) {
-      return processActions(actions, [], agents);
+      return processActions(actions, [], agents, {
+        sceneTitle: outline.title,
+        sceneType: outline.type,
+      });
     }
 
     return generateDefaultQuizActions(outline);
@@ -1609,7 +1616,10 @@ export async function generateSceneActions(
     );
 
     if (actions.length > 0) {
-      return processActions(actions, [], agents);
+      return processActions(actions, [], agents, {
+        sceneTitle: outline.title,
+        sceneType: outline.type,
+      });
     }
 
     return generateDefaultInteractiveActions(outline);
@@ -1637,7 +1647,10 @@ export async function generateSceneActions(
     const actions = parseActionsFromStructuredOutput(response, outline.type);
 
     if (actions.length > 0) {
-      return processActions(actions, [], agents);
+      return processActions(actions, [], agents, {
+        sceneTitle: outline.title,
+        sceneType: outline.type,
+      });
     }
 
     return generateDefaultPBLActions(outline);
@@ -1649,15 +1662,23 @@ export async function generateSceneActions(
 /**
  * Generate default PBL Actions (fallback)
  */
-function generateDefaultPBLActions(_outline: SceneOutline): Action[] {
-  return [
+function generateDefaultPBLActions(outline: SceneOutline): Action[] {
+  return processActions(
+    [
+      {
+        id: `action_${nanoid(8)}`,
+        type: 'speech',
+        title: 'PBL 项目介绍',
+        text: '请选择适合你的角色，查看当前任务看板，并从第一项任务开始。',
+      },
+    ],
+    [],
+    undefined,
     {
-      id: `action_${nanoid(8)}`,
-      type: 'speech',
-      title: 'PBL 项目介绍',
-      text: '现在让我们开始一个项目式学习活动。请选择你的角色，查看任务看板，开始协作完成项目。',
+      sceneTitle: outline.title,
+      sceneType: outline.type,
     },
-  ];
+  );
 }
 
 /**
@@ -1704,18 +1725,45 @@ function formatQuestionsForPrompt(questions: QuizQuestion[]): string {
 /**
  * Process and validate Actions
  */
-function processActions(actions: Action[], elements: PPTElement[], agents?: AgentInfo[]): Action[] {
+function processActions(
+  actions: Action[],
+  elements: PPTElement[],
+  agents?: AgentInfo[],
+  speechContext?: { sceneTitle?: string; sceneType?: SceneOutline['type'] },
+): Action[] {
   const elementIds = new Set(elements.map((el) => el.id));
   const agentIds = new Set(agents?.map((a) => a.id) || []);
   const studentAgents = agents?.filter((a) => a.role === 'student') || [];
   const nonTeacherAgents = agents?.filter((a) => a.role !== 'teacher') || [];
+  const speechIndexes = actions
+    .map((action, index) => (action.type === 'speech' ? index : -1))
+    .filter((index) => index >= 0);
+  const firstSpeechIndex = speechIndexes[0];
+  const lastSpeechIndex = speechIndexes[speechIndexes.length - 1];
 
-  return actions.map((action) => {
+  return actions.map((action, actionIndex) => {
     // Ensure each action has an ID
     const processedAction: Action = {
       ...action,
       id: action.id || `action_${nanoid(8)}`,
     };
+
+    if (processedAction.type === 'speech') {
+      const portableSpeech = sanitizePortableSpeech(processedAction.text, agents, {
+        ...speechContext,
+        isFirstSpeech: actionIndex === firstSpeechIndex,
+        isLastSpeech: actionIndex === lastSpeechIndex,
+      });
+      if (portableSpeech.changed) {
+        processedAction.text = portableSpeech.text;
+        delete processedAction.audioId;
+        delete processedAction.audioUrl;
+        delete (processedAction as typeof processedAction & { audioRef?: string }).audioRef;
+        log.warn(
+          `Removed classroom-agent-dependent narration from speech action "${processedAction.id}"`,
+        );
+      }
+    }
 
     // Validate spotlight elementId
     if (processedAction.type === 'spotlight') {
@@ -1780,35 +1828,54 @@ function generateDefaultSlideActions(outline: SceneOutline, elements: PPTElement
     text: speechText,
   });
 
-  return actions;
+  return processActions(actions, elements, undefined, {
+    sceneTitle: outline.title,
+    sceneType: outline.type,
+  });
 }
 
 /**
  * Generate default quiz Actions (fallback)
  */
-function generateDefaultQuizActions(_outline: SceneOutline): Action[] {
-  return [
+function generateDefaultQuizActions(outline: SceneOutline): Action[] {
+  return processActions(
+    [
+      {
+        id: `action_${nanoid(8)}`,
+        type: 'speech',
+        title: '测验引导',
+        text: '请独立完成每道题，准备好后提交答案。',
+      },
+    ],
+    [],
+    undefined,
     {
-      id: `action_${nanoid(8)}`,
-      type: 'speech',
-      title: '测验引导',
-      text: '现在让我们来做一个小测验，检验一下学习成果。',
+      sceneTitle: outline.title,
+      sceneType: outline.type,
     },
-  ];
+  );
 }
 
 /**
  * Generate default interactive Actions (fallback)
  */
-function generateDefaultInteractiveActions(_outline: SceneOutline): Action[] {
-  return [
+function generateDefaultInteractiveActions(outline: SceneOutline): Action[] {
+  return processActions(
+    [
+      {
+        id: `action_${nanoid(8)}`,
+        type: 'speech',
+        title: '交互引导',
+        text: '请操作当前页面中的控件，比较不同输入下的变化，并总结稳定关系。',
+      },
+    ],
+    [],
+    undefined,
     {
-      id: `action_${nanoid(8)}`,
-      type: 'speech',
-      title: '交互引导',
-      text: '现在让我们通过交互式可视化来探索这个概念。请尝试操作页面中的元素，观察变化。',
+      sceneTitle: outline.title,
+      sceneType: outline.type,
     },
-  ];
+  );
 }
 
 /**

@@ -108,6 +108,47 @@ describe('model-routes', () => {
     expect(getStageModel('scene-content:slide')).toBe('openai:gpt-5.4-mini');
   });
 
+  it('routes all course generation stages through the high-level group', async () => {
+    process.env.MODEL_ROUTES = JSON.stringify({
+      'course-generation': 'siliconflow:zai-org/GLM-5.2',
+    });
+    const { getStageModel } = await import('@/lib/server/model-routes');
+
+    for (const stage of [
+      'scene-outlines-stream',
+      'scene-content:slide',
+      'scene-content:quiz',
+      'scene-content:interactive',
+      'scene-actions',
+      'agent-profiles',
+      'generate-classroom',
+    ]) {
+      expect(getStageModel(stage)).toBe('siliconflow:zai-org/GLM-5.2');
+    }
+    expect(getStageModel('quiz-grade')).toBeUndefined();
+  });
+
+  it('routes visual review and repair through the courseware quality group', async () => {
+    process.env.MODEL_ROUTES = JSON.stringify({
+      'courseware-quality': 'siliconflow:moonshotai/Kimi-K2.7-Code',
+    });
+    const { getStageModel } = await import('@/lib/server/model-routes');
+
+    expect(getStageModel('courseware-vision-audit')).toBe('siliconflow:moonshotai/Kimi-K2.7-Code');
+    expect(getStageModel('courseware-guard-repair')).toBe('siliconflow:moonshotai/Kimi-K2.7-Code');
+  });
+
+  it('prefers a fine-grained route over its high-level group', async () => {
+    process.env.MODEL_ROUTES = JSON.stringify({
+      'course-generation': 'siliconflow:zai-org/GLM-5.2',
+      'scene-content:quiz': 'siliconflow:Qwen/Qwen3.6-35B-A3B',
+    });
+    const { getStageModel } = await import('@/lib/server/model-routes');
+
+    expect(getStageModel('scene-content:quiz')).toBe('siliconflow:Qwen/Qwen3.6-35B-A3B');
+    expect(getStageModel('scene-content:slide')).toBe('siliconflow:zai-org/GLM-5.2');
+  });
+
   it('ignores an unknown scene-content:<type> key with a warning', async () => {
     const warn = vi.fn();
     vi.doMock('@/lib/logger', () => ({
@@ -203,6 +244,8 @@ describe('model-routes', () => {
     const { LLM_STAGES } = await import('@/lib/server/model-routes');
     expect(LLM_STAGES).toEqual(
       expect.arrayContaining([
+        'course-generation',
+        'courseware-quality',
         'scene-content:slide',
         'scene-content:quiz',
         'scene-content:interactive',
@@ -215,6 +258,8 @@ describe('model-routes', () => {
         'pbl-chat',
         'chat-adapter',
         'generate-classroom',
+        'courseware-vision-audit',
+        'courseware-guard-repair',
         'web-search-query-rewrite',
       ]),
     );

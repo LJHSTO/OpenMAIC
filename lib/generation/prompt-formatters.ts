@@ -11,40 +11,24 @@ export function buildCourseContext(ctx?: SceneGenerationContext): string {
 
   const lines: string[] = [];
 
-  // Course outline with position marker
-  lines.push('Course Outline:');
+  // Course map is orientation-only. Narration must not depend on this order.
+  lines.push('Course Map (orientation only; never cite its order in speech):');
   ctx.allTitles.forEach((t, i) => {
     const marker = i === ctx.pageIndex - 1 ? ' ← current' : '';
-    lines.push(`  ${i + 1}. ${t}${marker}`);
+    lines.push(`  - ${t}${marker}`);
   });
 
-  // Position information
   lines.push('');
   lines.push(
-    'IMPORTANT: All pages belong to the SAME class session. Do NOT greet again after the first page. When referencing content from earlier pages, say "we just covered" or "as mentioned on page N" — NEVER say "last class" or "previous session" because there is no previous session.',
+    'IMPORTANT: The current scene may be opened alone, replayed, reordered, or selected adaptively. Its narration must be self-contained and must not assume that any other scene was completed.',
   );
-  lines.push('');
-  if (ctx.pageIndex === 1) {
-    lines.push('Position: This is the FIRST page. Open with a greeting and course introduction.');
-  } else if (ctx.pageIndex === ctx.totalPages) {
-    lines.push('Position: This is the LAST page. Conclude the course with a summary and closing.');
-    lines.push(
-      'Transition: Continue naturally from the previous page. Do NOT greet or re-introduce.',
-    );
-  } else {
-    lines.push(`Position: Page ${ctx.pageIndex} of ${ctx.totalPages} (middle of the course).`);
-    lines.push(
-      'Transition: Continue naturally from the previous page. Do NOT greet or re-introduce.',
-    );
-  }
-
-  // Previous page speech for transition reference
-  if (ctx.previousSpeeches.length > 0) {
-    lines.push('');
-    lines.push('Previous page speech (for transition reference):');
-    const lastSpeech = ctx.previousSpeeches[ctx.previousSpeeches.length - 1];
-    lines.push(`  "...${lastSpeech.slice(-150)}"`);
-  }
+  lines.push(`Current Scene: ${ctx.allTitles[ctx.pageIndex - 1] || 'Untitled scene'}`);
+  lines.push(
+    'Start by naming or clearly anchoring the current concept. Do not greet, cite page numbers, say "previous/next page", claim the learner completed an earlier activity, or promise a fixed next scene.',
+  );
+  lines.push(
+    'Continuity is allowed only between ordered speech and interaction beats inside the current scene.',
+  );
 
   return lines.join('\n');
 }

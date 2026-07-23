@@ -27,6 +27,10 @@ import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { llmApiError } from '@/lib/server/llm-error-response';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
+import {
+  createSceneModelAbortSignal,
+  resolveSceneActionsOutputTokens,
+} from '@/lib/generation/scene-generation-policy';
 
 const log = createLogger('Scene Actions API');
 
@@ -91,6 +95,8 @@ export async function POST(req: NextRequest) {
 
     // Detect vision capability
     const hasVision = !!modelInfo?.capabilities?.vision;
+    const abortSignal = createSceneModelAbortSignal(req.signal);
+    const maxOutputTokens = resolveSceneActionsOutputTokens(modelInfo?.outputWindow);
 
     // AI call function (actions typically don't use vision, but kept for consistency)
     const aiCall = async (
@@ -109,8 +115,9 @@ export async function POST(req: NextRequest) {
                 content: buildVisionUserContent(userPrompt, images),
               },
             ],
-            maxOutputTokens: modelInfo?.outputWindow,
+            maxOutputTokens,
             maxRetries: 0,
+            abortSignal,
           },
           'scene-actions',
           undefined,
@@ -123,8 +130,9 @@ export async function POST(req: NextRequest) {
           model: languageModel,
           system: systemPrompt,
           prompt: userPrompt,
-          maxOutputTokens: modelInfo?.outputWindow,
+          maxOutputTokens,
           maxRetries: 0,
+          abortSignal,
         },
         'scene-actions',
         undefined,

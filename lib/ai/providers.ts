@@ -868,6 +868,22 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     requiresApiKey: true,
     icon: '/logos/siliconflow.svg',
     models: [
+      // Recommended OpenMAIC course generation model
+      {
+        id: 'zai-org/GLM-5.2',
+        name: 'GLM-5.2',
+        contextWindow: 1000000,
+        outputWindow: 128000,
+        capabilities: { streaming: true, tools: true, vision: false },
+      },
+      // Recommended OpenMAIC courseware review and repair model
+      {
+        id: 'moonshotai/Kimi-K2.7-Code',
+        name: 'Kimi-K2.7 Code',
+        contextWindow: 256000,
+        outputWindow: 32768,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
       // DeepSeek Series
       {
         id: 'deepseek-ai/DeepSeek-V3.2',

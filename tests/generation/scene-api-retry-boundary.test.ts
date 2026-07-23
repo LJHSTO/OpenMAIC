@@ -81,6 +81,30 @@ describe('scene API retry boundary', () => {
     expect(mocks.callLLM.mock.calls[0][0].maxRetries).toBe(0);
   });
 
+  it('caps scene-content output and passes a bounded abort signal', async () => {
+    vi.resetModules();
+    mocks.resolveModelFromRequest.mockResolvedValue({
+      model: { id: 'language-model' },
+      modelInfo: { outputWindow: 128_000, capabilities: {} },
+      modelString: 'test:model',
+      thinkingConfig: undefined,
+    });
+    mocks.generateSceneContent.mockImplementation(async (_outline, aiCall) => {
+      await aiCall('system', 'user');
+      return { elements: [], remark: 'ok' };
+    });
+
+    const { POST } = await import('@/app/api/generate/scene-content/route');
+    const response = await POST(mockRequest());
+
+    expect(response.status).toBe(200);
+    expect(mocks.callLLM.mock.calls[0][0]).toMatchObject({
+      maxOutputTokens: 16_384,
+      maxRetries: 0,
+    });
+    expect(mocks.callLLM.mock.calls[0][0].abortSignal).toBeInstanceOf(AbortSignal);
+  });
+
   it('disables AI SDK retries for scene-actions model calls', async () => {
     vi.resetModules();
     mocks.generateSceneActions.mockImplementation(async (_outline, _content, aiCall) => {
@@ -106,6 +130,38 @@ describe('scene API retry boundary', () => {
 
     expect(body.success).toBe(true);
     expect(mocks.callLLM.mock.calls[0][0].maxRetries).toBe(0);
+  });
+
+  it('caps scene-actions output and passes a bounded abort signal', async () => {
+    vi.resetModules();
+    mocks.resolveModelFromRequest.mockResolvedValue({
+      model: { id: 'language-model' },
+      modelInfo: { outputWindow: 128_000, capabilities: {} },
+      modelString: 'test:model',
+      thinkingConfig: undefined,
+    });
+    mocks.generateSceneActions.mockImplementation(async (_outline, _content, aiCall) => {
+      await aiCall('system', 'user');
+      return [];
+    });
+    mocks.buildCompleteScene.mockReturnValue({
+      id: 'scene-1',
+      type: 'slide',
+      title: outline.title,
+      order: outline.order,
+      content: { elements: [], remark: 'ok' },
+      actions: [],
+    });
+
+    const { POST } = await import('@/app/api/generate/scene-actions/route');
+    const response = await POST(mockRequest({ content: { elements: [], remark: 'ok' } }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.callLLM.mock.calls[0][0]).toMatchObject({
+      maxOutputTokens: 16_384,
+      maxRetries: 0,
+    });
+    expect(mocks.callLLM.mock.calls[0][0].abortSignal).toBeInstanceOf(AbortSignal);
   });
 
   it('preserves an upstream 401 from the scene-content route', async () => {

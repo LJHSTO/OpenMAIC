@@ -11,6 +11,7 @@ import {
   Globe,
   AlertCircle,
   RefreshCw,
+  Square,
   Trophy,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -26,6 +27,7 @@ interface SceneSidebarProps {
   readonly onCollapseChange: (collapsed: boolean) => void;
   readonly onSceneSelect?: (sceneId: string) => void;
   readonly onRetryOutline?: (outlineId: string) => Promise<void>;
+  readonly onStopGeneration?: () => void;
   readonly isCourseComplete?: boolean;
 }
 
@@ -38,6 +40,7 @@ export function SceneSidebar({
   onCollapseChange,
   onSceneSelect,
   onRetryOutline,
+  onStopGeneration,
   isCourseComplete,
 }: SceneSidebarProps) {
   const { t } = useI18n();
@@ -446,6 +449,19 @@ export function SceneSidebar({
                           <span className="text-[9px] font-medium text-gray-400 dark:text-gray-500 mt-0.5">
                             {isPaused ? t('stage.paused') : t('stage.generating')}
                           </span>
+                          {!isPaused && onStopGeneration && (
+                            <button
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onStopGeneration();
+                              }}
+                              className="mt-1 inline-flex h-6 items-center gap-1 rounded-md px-2 text-[10px] font-medium text-gray-500 transition-colors hover:bg-gray-200/70 hover:text-gray-700 active:scale-95 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                              title={t('edit.agent.stop')}
+                            >
+                              <Square className="h-3 w-3 fill-current" />
+                              <span>{t('edit.agent.stop')}</span>
+                            </button>
+                          )}
                         </>
                       )}
                     </div>

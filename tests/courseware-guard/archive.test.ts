@@ -8,6 +8,7 @@ import {
   createCoursewareArchive,
   resolveCoursewareOutputDir,
   sanitizeArtifactSegment,
+  type CoursewareArchiveOptions,
 } from '@/lib/courseware-guard/archive';
 
 const stageId = 'archive-portable-test';
@@ -22,14 +23,10 @@ afterEach(async () => {
 });
 
 describe('courseware archive naming', () => {
-  it('labels archives with a filesystem-safe course title, model and timestamp', () => {
-    const filename = buildCoursewareArtifactFilename(
-      'Calculus: limits / continuity',
-      'openai:gpt-5.4',
-      new Date('2026-07-15T01:02:03.000Z'),
-    );
+  it('labels the latest archive with only a filesystem-safe course title', () => {
+    const filename = buildCoursewareArtifactFilename('Calculus: limits / continuity');
 
-    expect(filename).toBe('Calculus_limits_continuity__openai_gpt-5.4__20260715T010203Z.maic.zip');
+    expect(filename).toBe('Calculus_limits_continuity.maic.zip');
   });
 
   it('uses a bounded fallback for invalid Windows path segments', () => {
@@ -87,12 +84,13 @@ describe('courseware archive naming', () => {
         actions: [],
       },
     ];
-    const result = await createCoursewareArchive({
+    const archiveOptions = {
       stage,
       scenes,
       model: 'test:model',
       outputDir: temporaryOutputDir,
       screenshotsDir: path.join(temporaryOutputDir, 'screenshots'),
+      interactiveScreenshotsDir: path.join(temporaryOutputDir, 'interactive-screenshots'),
       guardReport: {
         schemaVersion: 'openmaic-courseware-guard-v1',
         mode: 'safe-fix',
@@ -104,6 +102,28 @@ describe('courseware archive naming', () => {
         issues: [],
         repairs: [],
       },
+      knowledgeReport: {
+        schemaVersion: 'openmaic-courseware-knowledge-audit-v1',
+        generatedAt: '2026-07-15T00:00:00.000Z',
+        classroomId: stageId,
+        contractAvailable: false,
+        expectedOutlines: 0,
+        matchedOutlines: 0,
+        publishable: true,
+        counts: { critical: 0, warning: 0 },
+        mappings: [],
+        issues: [],
+      },
+      resourceReport: {
+        schemaVersion: 'openmaic-courseware-resource-audit-v1',
+        generatedAt: '2026-07-15T00:00:00.000Z',
+        classroomId: stageId,
+        publishable: true,
+        counts: { critical: 0, warning: 0 },
+        checked: 1,
+        resources: [],
+        issues: [],
+      },
       visualReport: {
         schemaVersion: 'openmaic-courseware-visual-audit-v1',
         generatedAt: '2026-07-15T00:00:00.000Z',
@@ -114,14 +134,31 @@ describe('courseware archive naming', () => {
         slides: [],
         issues: [],
       },
-    });
+      interactiveReport: {
+        schemaVersion: 'openmaic-courseware-interactive-audit-v1',
+        generatedAt: '2026-07-15T00:00:00.000Z',
+        classroomId: stageId,
+        viewport: { width: 1280, height: 720 },
+        publishable: true,
+        counts: { critical: 0, warning: 0 },
+        scenes: [],
+        issues: [],
+      },
+    } satisfies CoursewareArchiveOptions;
+    const firstResult = await createCoursewareArchive(archiveOptions);
+    await fs.writeFile(firstResult.path, 'stale archive');
+    const result = await createCoursewareArchive(archiveOptions);
     const zip = await JSZip.loadAsync(await fs.readFile(result.path));
     const manifest = JSON.parse(await zip.file('manifest.json')!.async('string')) as {
       scenes: Array<{ content: { canvas: { elements: Array<{ src: string }> } } }>;
       mediaIndex: Record<string, unknown>;
     };
 
+    expect(result.path).toBe(firstResult.path);
     expect(manifest.scenes[0].content.canvas.elements[0].src).toBe('gen_img_1');
     expect(manifest.mediaIndex).toHaveProperty('media/gen_img_1.png');
+    expect(zip.file('courseware-resource-report.json')).not.toBeNull();
+    expect(zip.file('courseware-knowledge-report.json')).not.toBeNull();
+    expect(zip.file('courseware-interactive-report.json')).not.toBeNull();
   });
 });

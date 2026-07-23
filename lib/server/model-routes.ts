@@ -1,9 +1,10 @@
 /**
  * Per-stage LLM model routing (issue #745).
  *
- * Optional, config-only overrides that map a generation *stage* to a specific
- * model string. Consulted during model resolution and falling back to today's
- * behavior (`DEFAULT_MODEL`) when unset — zero behavior change unless opted in.
+ * Optional, config-only overrides that map a generation *stage* or a high-level
+ * stage group to a specific model string. Consulted during model resolution and
+ * falling back to today's behavior (`DEFAULT_MODEL`) when unset — zero behavior
+ * change unless opted in.
  *
  * Surface: a single JSON env var `MODEL_ROUTES`. Each value is a model string in
  * the canonical `provider:model` format (see parseModelString), OR an object
@@ -12,7 +13,7 @@
  * per the model's capability by callLLM. e.g.
  *
  *   DEFAULT_MODEL=openai:gpt-5.4-mini
- *   MODEL_ROUTES='{"scene-content":"openai:gpt-5.4","pbl-chat":{"model":"anthropic:claude-sonnet-4","thinking":{"enabled":false}},"pbl-v2-runtime":"deepseek:deepseek-v4-pro"}'
+ *   MODEL_ROUTES='{"course-generation":"siliconflow:zai-org/GLM-5.2","courseware-quality":"siliconflow:moonshotai/Kimi-K2.7-Code"}'
  *
  * Only the *routable* stages below are valid keys — each is backed by a real
  * `resolveModel` call site. Downstream sub-calls (e.g. `pbl-generate`,
@@ -97,8 +98,8 @@ function parseThinking(key: string, raw: unknown): ThinkingConfig | undefined {
 }
 
 /**
- * Stages that can be independently routed to a model. Each value is a valid
- * `MODEL_ROUTES` key; the base entries also mirror a `callLLM` source label.
+ * High-level routes cover the two operator-facing phases. Fine-grained stage
+ * routes remain available for advanced cost/quality overrides.
  *
  * `scene-content:<type>` are finer-grained composite keys: when a scene-content
  * request carries an `outline.type`, it routes via the composite key and falls
@@ -109,7 +110,12 @@ function parseThinking(key: string, raw: unknown): ThinkingConfig | undefined {
  * a specific runtime endpoint can be routed independently, or inherit the base
  * `pbl-v2-runtime` model when no endpoint-specific route is configured.
  */
+export const LLM_STAGE_GROUPS = ['course-generation', 'courseware-quality'] as const;
+
+export type LlmStageGroup = (typeof LLM_STAGE_GROUPS)[number];
+
 export const LLM_STAGES = [
+  ...LLM_STAGE_GROUPS,
   'scene-outlines-stream',
   'scene-content',
   'scene-content:slide',
@@ -128,11 +134,35 @@ export const LLM_STAGES = [
   'chat-adapter',
   'generate-classroom',
   'courseware-vision-audit',
+  'courseware-guard-repair',
   'web-search-query-rewrite',
   'maic-agent',
 ] as const;
 
 export type LlmStage = (typeof LLM_STAGES)[number];
+
+const COURSE_GENERATION_STAGES = new Set<string>([
+  'scene-outlines-stream',
+  'scene-content',
+  'scene-content:slide',
+  'scene-content:quiz',
+  'scene-content:interactive',
+  'scene-content:pbl',
+  'scene-actions',
+  'agent-profiles',
+  'generate-classroom',
+]);
+
+const COURSEWARE_QUALITY_STAGES = new Set<string>([
+  'courseware-vision-audit',
+  'courseware-guard-repair',
+]);
+
+function getStageGroup(stage: string): LlmStageGroup | undefined {
+  if (COURSE_GENERATION_STAGES.has(stage)) return 'course-generation';
+  if (COURSEWARE_QUALITY_STAGES.has(stage)) return 'courseware-quality';
+  return undefined;
+}
 
 /** Parsed once per process (env is read at startup; tests reset via vi.resetModules). */
 let _routes: Record<string, StageRoute> | null = null;
@@ -195,9 +225,13 @@ function loadRoutes(): Record<string, StageRoute> {
  * Resolve the configured model string for a stage, or `undefined` when the
  * stage is unset/unconfigured (callers fall back to `DEFAULT_MODEL`).
  *
+ * Resolution order inside MODEL_ROUTES is:
+ * exact/composite stage > base stage > high-level stage group.
+ *
  * Composite `a:b` stages resolve most-specific-first: the full key is tried,
  * then successively shorter prefixes (e.g. `scene-content:quiz` →
- * `scene-content`). Plain stages (no colon) are a single exact lookup.
+ * `scene-content`). If no fine-grained route matches, course generation and
+ * courseware quality stages fall back to their high-level group route.
  */
 export function getStageRoute(stage?: string): StageRoute | undefined {
   if (!stage) return undefined;
@@ -209,7 +243,7 @@ export function getStageRoute(stage?: string): StageRoute | undefined {
     const lastColon = key.lastIndexOf(':');
     key = lastColon > 0 ? key.slice(0, lastColon) : undefined;
   }
-  return undefined;
+  return routes[getStageGroup(stage) ?? ''];
 }
 
 /** Convenience: the resolved model string for a stage (route's `model`). */

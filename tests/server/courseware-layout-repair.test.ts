@@ -168,4 +168,40 @@ describe('deterministic courseware layout repair', () => {
     expect(result.scene).toBe(source);
     expect(result.handledIssueIds).toEqual([]);
   });
+
+  it('removes a flagged unreadable bitmap before AI rebuilds the diagram', () => {
+    const source = slideScene();
+    if (source.content.type !== 'slide') throw new Error('fixture is not a slide');
+    source.content.canvas.elements.push({
+      id: 'unreadable-diagram',
+      type: 'image',
+      left: 520,
+      top: 160,
+      width: 420,
+      height: 260,
+      rotate: 0,
+      src: 'gen_img_unreadable',
+      fixedRatio: false,
+    });
+
+    const result = applyDeterministicVisualRepairs(source, [
+      issue({
+        code: 'vision_issue',
+        severity: 'warning',
+        category: 'legibility',
+        elementIds: ['unreadable-diagram'],
+        message: 'Embedded labels are too small to read',
+      }),
+    ]);
+    if (result.scene.content.type !== 'slide') throw new Error('result is not a slide');
+
+    expect(result.scene).not.toBe(source);
+    expect(
+      result.scene.content.canvas.elements.some((element) => element.id === 'unreadable-diagram'),
+    ).toBe(false);
+    expect(result.handledIssueIds).toEqual([]);
+    expect(
+      source.content.canvas.elements.some((element) => element.id === 'unreadable-diagram'),
+    ).toBe(true);
+  });
 });

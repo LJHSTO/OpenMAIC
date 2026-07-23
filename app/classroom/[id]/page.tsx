@@ -14,6 +14,7 @@ import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
 import { createLogger } from '@/lib/logger';
 import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
+import { completeMaterializedCourse } from '@/lib/generation/materialized-course-resume';
 import { useAgentRegistry } from '@/lib/orchestration/registry/store';
 import {
   applyClassroomStageAndScenes,
@@ -44,6 +45,19 @@ export default function ClassroomDetailPage() {
       toast.error('Courseware finalization failed', { description: message, duration: 12_000 });
     },
   });
+
+  const handleStopGeneration = useCallback(() => {
+    const state = useStageStore.getState();
+    const currentOutline =
+      state.generatingOutlines.find((outline) => outline.order === state.currentGeneratingOrder) ??
+      state.generatingOutlines[0];
+
+    stop();
+    if (currentOutline) {
+      state.addFailedOutline(currentOutline);
+    }
+    state.setGenerationStatus('paused');
+  }, [stop]);
 
   const loadClassroom = useCallback(
     async (isEffectCurrent: () => boolean = () => true) => {
@@ -155,20 +169,33 @@ export default function ClassroomDetailPage() {
       // Resume media generation for any tasks not yet in IndexedDB.
       // generateMediaForOutlines skips already-completed tasks automatically.
       generationStartedRef.current = true;
-      // The deck reached the classroom already fully materialized (e.g. a
-      // single-slide course, or a deck whose last slide finished in
-      // generation-preview), so generateRemaining's completion path never
-      // ran. Record completion now so a later edit/delete is not treated as
-      // an interrupted generation. No-op if already complete or not all
-      // outlines have scenes.
-      useStageStore.getState().markGenerationCompleteIfDone();
       // Resume media only for outlines that still have a scene. On a finished
       // deck the user may have deleted a slide, leaving an orphaned outline;
       // generating its media would waste API calls on a slide that is gone.
       const materializedOrders = new Set(scenes.map((s) => s.order));
       const materializedOutlines = outlines.filter((o) => materializedOrders.has(o.order));
-      generateMediaForOutlines(materializedOutlines, stage.id).catch((err) => {
-        log.warn('[Classroom] Media generation resume error:', err);
+      const genParamsStr = sessionStorage.getItem('generationParams');
+      const params = genParamsStr ? JSON.parse(genParamsStr) : {};
+      completeMaterializedCourse({
+        generationComplete,
+        resumeMedia: () =>
+          generateMediaForOutlines(materializedOutlines, stage.id).catch((err) => {
+            log.warn('[Classroom] Media generation resume error:', err);
+          }),
+        finalize: () =>
+          generateRemaining({
+            pdfImages: params.pdfImages,
+            stageInfo: {
+              name: stage.name || '',
+              description: stage.description,
+              style: stage.style,
+            },
+            agents: params.agents,
+            userProfile: params.userProfile,
+            languageDirective: params.languageDirective || stage.languageDirective,
+          }),
+      }).catch((err) => {
+        log.warn('[Classroom] Materialized course completion error:', err);
       });
     }
   }, [loading, error, generateRemaining]);
@@ -200,7 +227,10 @@ export default function ClassroomDetailPage() {
               </div>
             </div>
           ) : (
-            <Stage onRetryOutline={retrySingleOutline} />
+            <Stage
+              onRetryOutline={retrySingleOutline}
+              onStopGeneration={handleStopGeneration}
+            />
           )}
         </div>
       </MediaStageProvider>

@@ -2,6 +2,9 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import JSZip from 'jszip';
 import type { CoursewareGuardReport } from '@/lib/courseware-guard';
+import type { CoursewareResourceAuditReport } from '@/lib/courseware-guard/resource-audit';
+import type { CoursewareInteractiveAuditReport } from '@/lib/courseware-guard/interactive-audit';
+import type { CoursewareKnowledgeAuditReport } from '@/lib/courseware-guard/knowledge-audit';
 import type { CoursewareVisualAuditReport } from '@/lib/courseware-guard/visual-audit';
 import {
   CLASSROOM_ZIP_EXTENSION,
@@ -12,7 +15,10 @@ import {
   type MediaIndexEntry,
 } from '@/lib/export/classroom-zip-types';
 import { actionsToManifest } from '@/lib/export/classroom-zip-utils';
-import { CLASSROOMS_DIR } from '@/lib/server/classroom-storage';
+import {
+  fileSystemCoursewareAuditStorage,
+  type CoursewareAuditStorage,
+} from '@/lib/server/courseware-audit-storage';
 import type { Scene, Stage } from '@/lib/types/stage';
 
 export interface CoursewareArchiveOptions {
@@ -20,8 +26,13 @@ export interface CoursewareArchiveOptions {
   scenes: Scene[];
   model: string;
   guardReport: CoursewareGuardReport;
+  knowledgeReport: CoursewareKnowledgeAuditReport;
+  resourceReport: CoursewareResourceAuditReport;
   visualReport: CoursewareVisualAuditReport;
+  interactiveReport: CoursewareInteractiveAuditReport;
   screenshotsDir: string;
+  interactiveScreenshotsDir: string;
+  storage?: Pick<CoursewareAuditStorage, 'listResources'>;
   outputDir?: string;
   groupByModel?: boolean;
 }
@@ -60,16 +71,8 @@ export function sanitizeArtifactSegment(value: string, fallback: string): string
   );
 }
 
-export function buildCoursewareArtifactFilename(
-  courseTitle: string,
-  model: string,
-  createdAt = new Date(),
-): string {
-  const timestamp = createdAt
-    .toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\.\d{3}Z$/, 'Z');
-  return `${sanitizeArtifactSegment(courseTitle, 'course')}__${sanitizeArtifactSegment(model, 'model')}__${timestamp}${CLASSROOM_ZIP_EXTENSION}`;
+export function buildCoursewareArtifactFilename(courseTitle: string): string {
+  return `${sanitizeArtifactSegment(courseTitle, 'course')}${CLASSROOM_ZIP_EXTENSION}`;
 }
 
 export function resolveCoursewareOutputDir(
@@ -146,7 +149,13 @@ function portableSceneContent(scene: Scene, mediaIndex: Record<string, MediaInde
 export async function createCoursewareArchive(
   options: CoursewareArchiveOptions,
 ): Promise<CoursewareArchiveResult> {
-  if (!options.guardReport.publishable || !options.visualReport.publishable) {
+  if (
+    !options.guardReport.publishable ||
+    !options.knowledgeReport.publishable ||
+    !options.resourceReport.publishable ||
+    !options.visualReport.publishable ||
+    !options.interactiveReport.publishable
+  ) {
     throw new Error('Courseware archive blocked because validation has critical issues');
   }
 
@@ -156,20 +165,17 @@ export async function createCoursewareArchive(
     options.groupByModel,
   );
   await fs.mkdir(outputDir, { recursive: true });
-  const filename = buildCoursewareArtifactFilename(options.stage.name, options.model);
+  const filename = buildCoursewareArtifactFilename(options.stage.name);
   const outputPath = path.join(outputDir, filename);
   const zip = new JSZip();
-  const classroomResourceDir = path.join(CLASSROOMS_DIR, options.stage.id);
-  const resourceFiles = await listFilesRecursive(classroomResourceDir);
+  const storage = options.storage ?? fileSystemCoursewareAuditStorage;
+  const resourceFiles = await storage.listResources(options.stage.id);
   const mediaIndex: Record<string, MediaIndexEntry> = {};
   const audioIdToPath = new Map<string, string>();
 
-  for (const absolutePath of resourceFiles) {
-    const relativePath = path
-      .relative(classroomResourceDir, absolutePath)
-      .split(path.sep)
-      .join('/');
-    const data = await fs.readFile(absolutePath);
+  for (const resource of resourceFiles) {
+    const relativePath = resource.path;
+    const data = resource.data;
     zip.file(relativePath, data);
     const extension = path.extname(relativePath).toLowerCase();
     if (relativePath.startsWith('audio/')) {
@@ -243,7 +249,13 @@ export async function createCoursewareArchive(
     JSON.stringify({ id: options.stage.id, stage: options.stage, scenes: options.scenes }, null, 2),
   );
   zip.file('courseware-guard-report.json', JSON.stringify(options.guardReport, null, 2));
+  zip.file('courseware-knowledge-report.json', JSON.stringify(options.knowledgeReport, null, 2));
+  zip.file('courseware-resource-report.json', JSON.stringify(options.resourceReport, null, 2));
   zip.file('courseware-visual-report.json', JSON.stringify(options.visualReport, null, 2));
+  zip.file(
+    'courseware-interactive-report.json',
+    JSON.stringify(options.interactiveReport, null, 2),
+  );
 
   const screenshotFiles = await listFilesRecursive(options.screenshotsDir);
   for (const screenshotPath of screenshotFiles) {
@@ -253,10 +265,19 @@ export async function createCoursewareArchive(
       .join('/');
     zip.file(`screenshots/${relative}`, await fs.readFile(screenshotPath));
   }
+  const interactiveScreenshotFiles = await listFilesRecursive(options.interactiveScreenshotsDir);
+  for (const screenshotPath of interactiveScreenshotFiles) {
+    const relative = path
+      .relative(options.interactiveScreenshotsDir, screenshotPath)
+      .split(path.sep)
+      .join('/');
+    zip.file(`interactive-screenshots/${relative}`, await fs.readFile(screenshotPath));
+  }
 
   const archive = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   const temporaryPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(temporaryPath, archive);
+  await fs.rm(outputPath, { force: true });
   await fs.rename(temporaryPath, outputPath);
   return { path: outputPath, filename, outputDir, size: archive.byteLength };
 }

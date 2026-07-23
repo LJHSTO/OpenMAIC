@@ -28,6 +28,10 @@ import {
   withGenerationRetry,
   type GenerationRetryOptions,
 } from '@/lib/generation/generation-retry';
+import {
+  CLASSROOM_SCENE_RETRY_OPTIONS,
+  resolveClassroomContentRetryOptions,
+} from '@/lib/generation/scene-generation-policy';
 import { guardGeneratedScene } from '@/lib/courseware-guard';
 import { finalizeCurrentCourseware } from '@/lib/courseware-guard/finalize-client';
 
@@ -554,6 +558,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
               languageDirective: params.languageDirective,
             },
             signal,
+            resolveClassroomContentRetryOptions(outline.type),
           );
 
         // Pre-warm content fetches (<= parallelConcurrency in flight), keyed by
@@ -649,6 +654,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
               languageDirective: params.languageDirective,
             },
             signal,
+            CLASSROOM_SCENE_RETRY_OPTIONS,
           );
 
           if (actionsResult.success && actionsResult.scene) {
@@ -813,6 +819,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             languageDirective: params.languageDirective,
           },
           signal,
+          resolveClassroomContentRetryOptions(outline.type),
         );
 
         if (!contentResult.success || !contentResult.content) {
@@ -841,6 +848,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             languageDirective: params.languageDirective,
           },
           signal,
+          CLASSROOM_SCENE_RETRY_OPTIONS,
         );
 
         if (!actionsResult.success || !actionsResult.scene) {

@@ -6,6 +6,7 @@ import {
   applyOutlineFallbacks,
   generateSceneOutlinesFromRequirements,
 } from '@/lib/generation/outline-generator';
+import { buildVisionUserContent } from '@/lib/generation/prompt-formatters';
 import {
   createSceneWithActions,
   generateSceneActions,
@@ -30,10 +31,18 @@ import {
 } from '@/lib/server/classroom-media-generation';
 import { withGenerationRetry } from '@/lib/generation/generation-retry';
 import { buildVideoManifestFromOutlines } from '@/lib/media/video-manifest';
-import type { UserRequirements } from '@/lib/types/generation';
+import { sortDocumentImagesForVision } from '@/lib/document/bundle';
+import type { ImageMapping, PdfImage, UserRequirements } from '@/lib/types/generation';
 import type { Scene, Stage } from '@/lib/types/stage';
 import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
 import { guardGeneratedScene, type CoursewareGuardReport } from '@/lib/courseware-guard';
+import {
+  resolveCoursewareAuditPolicy,
+  type CoursewareAuditProfile,
+} from '@/lib/courseware-guard/audit-policy';
+import type { CoursewareResourceAuditReport } from '@/lib/courseware-guard/resource-audit';
+import type { CoursewareInteractiveAuditReport } from '@/lib/courseware-guard/interactive-audit';
+import type { CoursewareKnowledgeAuditReport } from '@/lib/courseware-guard/knowledge-audit';
 import type { CoursewareVisualAuditReport } from '@/lib/courseware-guard/visual-audit';
 import type { CoursewareArchiveResult } from '@/lib/courseware-guard/archive';
 import { finalizeCourseware } from '@/lib/server/finalize-courseware';
@@ -58,6 +67,8 @@ export interface GenerateClassroomInput {
   enableTTS?: boolean;
   /** Send rendered slide screenshots to a vision-capable LLM during final audit. */
   enableVisionAudit?: boolean;
+  /** Quality/cost preset for final validation. Defaults to OPENMAIC_COURSEWARE_AUDIT_PROFILE. */
+  auditProfile?: CoursewareAuditProfile;
   agentMode?: 'default' | 'generate';
 }
 
@@ -91,7 +102,10 @@ export interface GenerateClassroomResult {
   scenesCount: number;
   createdAt: string;
   guardReport: CoursewareGuardReport;
+  knowledgeReport: CoursewareKnowledgeAuditReport;
+  resourceReport: CoursewareResourceAuditReport;
   visualReport: CoursewareVisualAuditReport;
+  interactiveReport: CoursewareInteractiveAuditReport;
   archive: CoursewareArchiveResult;
 }
 
@@ -225,37 +239,54 @@ export async function generateClassroom(
   let searchQueryThinking = classroomThinking;
 
   const aiCall: AICallFn = async (systemPrompt, userPrompt, _images) => {
-    const result = await callLLM(
-      {
-        model: languageModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        maxOutputTokens: modelInfo?.outputWindow,
-      },
-      'generate-classroom',
-      undefined,
-      classroomThinking,
-    );
+    const request = _images?.length
+      ? {
+          model: languageModel,
+          system: systemPrompt,
+          messages: [
+            {
+              role: 'user' as const,
+              content: buildVisionUserContent(userPrompt, _images),
+            },
+          ],
+          maxOutputTokens: modelInfo?.outputWindow,
+        }
+      : {
+          model: languageModel,
+          messages: [
+            { role: 'system' as const, content: systemPrompt },
+            { role: 'user' as const, content: userPrompt },
+          ],
+          maxOutputTokens: modelInfo?.outputWindow,
+        };
+    const result = await callLLM(request, 'generate-classroom', undefined, classroomThinking);
     return result.text;
   };
 
   const sceneAiCall: AICallFn = async (systemPrompt, userPrompt, _images) => {
-    const result = await callLLM(
-      {
-        model: languageModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        maxOutputTokens: modelInfo?.outputWindow,
-        maxRetries: 0,
-      },
-      'generate-classroom-scene',
-      undefined,
-      classroomThinking,
-    );
+    const request = _images?.length
+      ? {
+          model: languageModel,
+          system: systemPrompt,
+          messages: [
+            {
+              role: 'user' as const,
+              content: buildVisionUserContent(userPrompt, _images),
+            },
+          ],
+          maxOutputTokens: modelInfo?.outputWindow,
+          maxRetries: 0,
+        }
+      : {
+          model: languageModel,
+          messages: [
+            { role: 'system' as const, content: systemPrompt },
+            { role: 'user' as const, content: userPrompt },
+          ],
+          maxOutputTokens: modelInfo?.outputWindow,
+          maxRetries: 0,
+        };
+    const result = await callLLM(request, 'generate-classroom-scene', undefined, classroomThinking);
     return result.text;
   };
 
@@ -281,6 +312,18 @@ export async function generateClassroom(
   };
   const vocationalActive = resolveVocationalActive(requirements);
   const pdfText = pdfContent?.text || undefined;
+  const pdfImages: PdfImage[] | undefined = pdfContent?.images
+    .filter((src) => typeof src === 'string' && src.trim())
+    .map((src, index) => ({
+      id: `img_${index + 1}`,
+      src,
+      pageNumber: 0,
+      description: `Source document image ${index + 1}`,
+    }));
+  const imageMapping: ImageMapping | undefined = pdfImages?.length
+    ? Object.fromEntries(pdfImages.map((image) => [image.id, image.src]))
+    : undefined;
+  const visionEnabled = modelInfo?.capabilities?.vision === true;
 
   await options.onProgress?.({
     step: 'researching',
@@ -351,9 +394,11 @@ export async function generateClassroom(
   const outlinesResult = await generateSceneOutlinesFromRequirements(
     requirements,
     pdfText,
-    undefined,
+    pdfImages,
     aiCall,
     {
+      visionEnabled,
+      imageMapping,
       imageGenerationEnabled: input.enableImageGeneration,
       videoGenerationEnabled: input.enableVideoGeneration,
       researchContext,
@@ -461,9 +506,17 @@ export async function generateClassroom(
       });
     };
 
+    const suggestedImageIds = new Set(safeOutline.suggestedImageIds ?? []);
+    const assignedImages =
+      pdfImages && suggestedImageIds.size > 0
+        ? sortDocumentImagesForVision(pdfImages.filter((image) => suggestedImageIds.has(image.id)))
+        : undefined;
     const content = await withGenerationRetry(
       () =>
         generateSceneContent(safeOutline, sceneAiCall, {
+          assignedImages,
+          imageMapping,
+          visionEnabled,
           agents,
           languageDirective,
           allowProceduralSkill: vocationalActive,
@@ -573,8 +626,13 @@ export async function generateClassroom(
     }
   }
 
+  const auditPolicy = resolveCoursewareAuditPolicy({
+    profile: input.auditProfile,
+    enableVisionAudit: input.enableVisionAudit,
+  });
   let visionModel: Awaited<ReturnType<typeof resolveModel>> | undefined;
-  const reviewScreenshot = input.enableVisionAudit
+  let repairModel: Awaited<ReturnType<typeof resolveModel>> | undefined;
+  const reviewScreenshot = auditPolicy.enableVisionAudit
     ? async (reviewInput: { scene: Scene; screenshotPath: string }) => {
         visionModel ??= await resolveModel({
           stage: 'courseware-vision-audit',
@@ -587,13 +645,18 @@ export async function generateClassroom(
         }
         return reviewCoursewareScreenshot({
           ...reviewInput,
+          cacheNamespace: visionModel.modelString,
+          enableCache: auditPolicy.enableVisionCache,
           callVisionModel: async (systemPrompt, userContent) => {
             const result = await callLLM(
               {
                 model: visionModel!.model,
                 system: systemPrompt,
                 messages: [{ role: 'user', content: userContent }],
-                maxOutputTokens: Math.min(visionModel!.modelInfo?.outputWindow ?? 4096, 4096),
+                maxOutputTokens: Math.min(
+                  visionModel!.modelInfo?.outputWindow ?? auditPolicy.maxVisionOutputTokens,
+                  auditPolicy.maxVisionOutputTokens,
+                ),
               },
               'courseware-vision-audit',
               undefined,
@@ -608,28 +671,51 @@ export async function generateClassroom(
   const finalized = await finalizeCourseware({
     stage,
     scenes,
+    outlines,
     model: modelString,
     baseUrl: options.baseUrl,
     reviewScreenshot,
-    repairScene: async (scene, instruction) => {
-      const repaired = await repairCoursewareScene({
+    auditPolicy,
+    strictVisualSemantics: auditPolicy.strictVisualSemantics,
+    regenerateNarrationAudio: input.enableTTS
+      ? async (changedScenes) => {
+          await generateTTSForClassroom(changedScenes, stageId, options.baseUrl);
+          if (
+            changedScenes.some((scene) =>
+              (scene.actions ?? []).some((action) => action.type === 'speech' && !action.audioId),
+            )
+          ) {
+            throw new Error('Portable narration repair could not regenerate all audio');
+          }
+        }
+      : undefined,
+    repairScene: async (scene, instruction, repairContext) => {
+      return repairCoursewareScene({
         stage,
         scene,
         scenes,
         outlines,
         instruction,
-        aiCall: async (_repairStage, systemPrompt, userPrompt) =>
-          sceneAiCall(systemPrompt, userPrompt),
+        ...repairContext,
+        aiCall: async (_repairStage, systemPrompt, userPrompt) => {
+          repairModel ??= await resolveModel({
+            stage: 'courseware-guard-repair',
+            modelString: input.model,
+          });
+          const result = await callLLM(
+            {
+              model: repairModel.model,
+              system: systemPrompt,
+              prompt: userPrompt,
+              maxOutputTokens: repairModel.modelInfo?.outputWindow,
+            },
+            'courseware-guard-repair',
+            undefined,
+            repairModel.thinkingConfig,
+          );
+          return result.text;
+        },
       });
-      if (repaired && input.enableTTS) {
-        await generateTTSForClassroom([repaired], stageId, options.baseUrl);
-        if (
-          (repaired.actions ?? []).some((action) => action.type === 'speech' && !action.audioId)
-        ) {
-          throw new Error('Automatic slide repair could not regenerate all narration audio');
-        }
-      }
-      return repaired;
     },
     onPhase: async (step, message) => {
       await options.onProgress?.({
@@ -659,7 +745,10 @@ export async function generateClassroom(
     scenesCount: finalized.scenes.length,
     createdAt: finalized.createdAt,
     guardReport: finalized.guardReport,
+    knowledgeReport: finalized.knowledgeReport,
+    resourceReport: finalized.resourceReport,
     visualReport: finalized.visualReport,
+    interactiveReport: finalized.interactiveReport,
     archive: finalized.archive,
   };
 }

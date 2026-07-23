@@ -1,6 +1,10 @@
 'use client';
 
-import type { CoursewareGuardReport } from '@/lib/courseware-guard';
+import { guardCourseware, type CoursewareGuardReport } from '@/lib/courseware-guard';
+import type { CoursewareAuditProfile } from '@/lib/courseware-guard/audit-policy';
+import type { CoursewareResourceAuditReport } from '@/lib/courseware-guard/resource-audit';
+import type { CoursewareInteractiveAuditReport } from '@/lib/courseware-guard/interactive-audit';
+import type { CoursewareKnowledgeAuditReport } from '@/lib/courseware-guard/knowledge-audit';
 import { uploadClientCoursewareResources } from '@/lib/courseware-guard/upload-client-resources';
 import type { CoursewareVisualAuditReport } from '@/lib/courseware-guard/visual-audit';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
@@ -13,7 +17,10 @@ export interface ClientCoursewareFinalizationResult {
   stage: Stage;
   scenes: Scene[];
   guardReport: CoursewareGuardReport;
+  knowledgeReport: CoursewareKnowledgeAuditReport;
+  resourceReport: CoursewareResourceAuditReport;
   visualReport: CoursewareVisualAuditReport;
+  interactiveReport: CoursewareInteractiveAuditReport;
   archive?: { path?: string; filename?: string; outputDir?: string; size?: number };
 }
 
@@ -21,12 +28,50 @@ export class CoursewareFinalizationClientError extends Error {
   constructor(
     message: string,
     readonly guardReport?: CoursewareGuardReport,
+    readonly knowledgeReport?: CoursewareKnowledgeAuditReport,
+    readonly resourceReport?: CoursewareResourceAuditReport,
     readonly visualReport?: CoursewareVisualAuditReport,
+    readonly interactiveReport?: CoursewareInteractiveAuditReport,
     readonly evidenceDir?: string,
   ) {
     super(message);
     this.name = 'CoursewareFinalizationClientError';
   }
+}
+
+interface SuccessfulFinalizationReceipt {
+  stageId: string;
+  fingerprint: string;
+  auditProfile: CoursewareAuditProfile;
+  enableVisionAudit: boolean;
+  result: ClientCoursewareFinalizationResult;
+}
+
+const AUDIT_PROFILE_RANK: Record<CoursewareAuditProfile, number> = {
+  fast: 0,
+  balanced: 1,
+  strict: 2,
+};
+
+let successfulFinalizationReceipt: SuccessfulFinalizationReceipt | null = null;
+
+function currentCoursewareFingerprint(stage: Stage, scenes: Scene[]): string {
+  return guardCourseware({ stage, scenes }, { mode: 'inspect', contentPolicy: 'strict' }).report
+    .beforeFingerprint;
+}
+
+export function getCurrentCoursewareFinalization(options?: {
+  auditProfile?: CoursewareAuditProfile;
+  enableVisionAudit?: boolean;
+}): ClientCoursewareFinalizationResult | null {
+  const state = useStageStore.getState();
+  const receipt = successfulFinalizationReceipt;
+  if (!state.stage || !receipt || receipt.stageId !== state.stage.id) return null;
+  if (currentCoursewareFingerprint(state.stage, state.scenes) !== receipt.fingerprint) return null;
+  const requestedProfile = options?.auditProfile ?? 'balanced';
+  if (AUDIT_PROFILE_RANK[receipt.auditProfile] < AUDIT_PROFILE_RANK[requestedProfile]) return null;
+  if (options?.enableVisionAudit === true && !receipt.enableVisionAudit) return null;
+  return receipt.result;
 }
 
 function preserveClientMediaReferences(originalScenes: Scene[], finalizedScenes: Scene[]): Scene[] {
@@ -83,6 +128,7 @@ async function readJsonResponse(response: Response): Promise<Record<string, unkn
 
 export async function finalizeCurrentCourseware(options?: {
   enableVisionAudit?: boolean;
+  auditProfile?: CoursewareAuditProfile;
 }): Promise<ClientCoursewareFinalizationResult> {
   const state = useStageStore.getState();
   if (!state.stage || state.scenes.length === 0) {
@@ -109,7 +155,8 @@ export async function finalizeCurrentCourseware(options?: {
     outlines: state.outlines,
     model: modelConfig.modelString || 'unknown-model',
     enableTTS: settings.ttsEnabled && settings.ttsProviderId !== 'browser-native-tts',
-    enableVisionAudit: options?.enableVisionAudit ?? true,
+    ...(options?.enableVisionAudit != null ? { enableVisionAudit: options.enableVisionAudit } : {}),
+    auditProfile: options?.auditProfile,
     ...(modelConfig.thinkingConfig ? { thinkingConfig: modelConfig.thinkingConfig } : {}),
   };
   const response = await fetch('/api/courseware-guard/finalize', {
@@ -124,7 +171,10 @@ export async function finalizeCurrentCourseware(options?: {
     stage?: Stage;
     scenes?: Scene[];
     guardReport?: CoursewareGuardReport;
+    knowledgeReport?: CoursewareKnowledgeAuditReport;
+    resourceReport?: CoursewareResourceAuditReport;
     visualReport?: CoursewareVisualAuditReport;
+    interactiveReport?: CoursewareInteractiveAuditReport;
     archive?: ClientCoursewareFinalizationResult['archive'];
   };
   let finalizedScenes: Scene[] | undefined;
@@ -134,20 +184,42 @@ export async function finalizeCurrentCourseware(options?: {
     await useStageStore.getState().saveToStorage();
   }
   if (!response.ok || !result.success || !result.stage || !finalizedScenes) {
+    successfulFinalizationReceipt = null;
     const evidence = result.evidenceDir ? ` Evidence: ${result.evidenceDir}` : '';
     throw new CoursewareFinalizationClientError(
       `${result.error || 'Courseware finalization failed'}.${evidence}`,
       result.guardReport,
+      result.knowledgeReport,
+      result.resourceReport,
       result.visualReport,
+      result.interactiveReport,
       result.evidenceDir,
     );
   }
 
-  return {
+  const finalizedResult = {
     stage: result.stage,
     scenes: finalizedScenes,
     guardReport: result.guardReport!,
+    knowledgeReport: result.knowledgeReport!,
+    resourceReport: result.resourceReport!,
     visualReport: result.visualReport!,
+    interactiveReport: result.interactiveReport!,
     archive: result.archive,
   };
+  successfulFinalizationReceipt = {
+    stageId: result.stage.id,
+    fingerprint: currentCoursewareFingerprint(result.stage, finalizedScenes),
+    auditProfile: options?.auditProfile ?? 'balanced',
+    enableVisionAudit: options?.enableVisionAudit ?? true,
+    result: finalizedResult,
+  };
+  return finalizedResult;
+}
+
+export async function ensureCurrentCoursewareFinalized(options?: {
+  enableVisionAudit?: boolean;
+  auditProfile?: CoursewareAuditProfile;
+}): Promise<ClientCoursewareFinalizationResult> {
+  return getCurrentCoursewareFinalization(options) ?? finalizeCurrentCourseware(options);
 }

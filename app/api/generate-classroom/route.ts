@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
       ...(rawBody.enableVisionAudit != null
         ? { enableVisionAudit: rawBody.enableVisionAudit }
         : {}),
+      ...(rawBody.auditProfile ? { auditProfile: rawBody.auditProfile } : {}),
       ...(rawBody.agentMode ? { agentMode: rawBody.agentMode } : {}),
     };
     const { requirement } = body;

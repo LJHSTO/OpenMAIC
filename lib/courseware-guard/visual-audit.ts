@@ -12,6 +12,9 @@ export interface VisualAuditIssue {
     | 'console_error'
     | 'resource_failed'
     | 'image_failed'
+    | 'video_failed'
+    | 'font_failed'
+    | 'rendered_mojibake'
     | 'text_overflow'
     | 'element_out_of_bounds'
     | 'content_overlap'
@@ -49,6 +52,7 @@ export interface RunVisualAuditOptions {
   screenshotsDir: string;
   timeoutMs?: number;
   visionReviewConcurrency?: number;
+  sceneIds?: Iterable<string>;
   reviewScreenshot?: (input: { scene: Scene; screenshotPath: string }) => Promise<
     Array<{
       severity: VisualAuditSeverity;
@@ -69,11 +73,27 @@ export async function runCoursewareVisualAudit(
   options: RunVisualAuditOptions,
 ): Promise<CoursewareVisualAuditReport> {
   const timeoutMs = options.timeoutMs ?? 60_000;
-  const slideScenes = options.scenes.filter(
+  const selectedSceneIds = options.sceneIds ? new Set(options.sceneIds) : null;
+  const allSlideScenes = options.scenes.filter(
     (scene): scene is Scene & { content: Extract<Scene['content'], { type: 'slide' }> } =>
       scene.content.type === 'slide',
   );
+  const slideScenes = allSlideScenes
+    .map((scene, screenshotIndex) => ({ scene, screenshotIndex }))
+    .filter(({ scene }) => !selectedSceneIds || selectedSceneIds.has(scene.id));
   await fs.mkdir(options.screenshotsDir, { recursive: true });
+  if (slideScenes.length === 0) {
+    return {
+      schemaVersion: 'openmaic-courseware-visual-audit-v1',
+      generatedAt: new Date().toISOString(),
+      classroomId: options.classroomId,
+      viewport: VIEWPORT,
+      publishable: true,
+      counts: { critical: 0, warning: 0 },
+      slides: [],
+      issues: [],
+    };
+  }
 
   const { chromium } = await import('@playwright/test');
   const browser = await chromium.launch({ headless: true });
@@ -106,7 +126,7 @@ export async function runCoursewareVisualAudit(
   let nextIssueId = 1;
 
   try {
-    for (const [index, scene] of slideScenes.entries()) {
+    for (const { scene, screenshotIndex } of slideScenes) {
       const page = await context.newPage();
       const runtimeErrors: Array<{ code: 'console_error' | 'resource_failed'; message: string }> =
         [];
@@ -122,7 +142,7 @@ export async function runCoursewareVisualAudit(
         });
       });
 
-      const filename = `${String(index + 1).padStart(3, '0')}-${safeSegment(scene.id)}.png`;
+      const filename = `${String(screenshotIndex + 1).padStart(3, '0')}-${safeSegment(scene.id)}.png`;
       const screenshotPath = path.join(options.screenshotsDir, filename);
       const relativeScreenshot = `screenshots/${filename}`;
       const issues: VisualAuditIssue[] = [];
@@ -260,7 +280,47 @@ export async function runCoursewareVisualAudit(
             }
           }
 
-          return { outOfBounds, textOverflow, failedImages, overlaps };
+          const failedVideos = Array.from(document.querySelectorAll<HTMLVideoElement>('video'))
+            .filter(
+              (video) => !!video.error || video.networkState === HTMLMediaElement.NETWORK_NO_SOURCE,
+            )
+            .map(
+              (video) =>
+                video.closest<HTMLElement>('[data-slide-element-id]')?.dataset.slideElementId ?? '',
+            )
+            .filter(Boolean);
+
+          const renderedMojibake = Array.from(
+            document.querySelectorAll<HTMLElement>('[data-slide-element-id]'),
+          )
+            .filter((root) => /(?:\uFFFD|Ã.|Â.|â€|ðŸ|鈥|锟斤拷)/u.test(root.textContent ?? ''))
+            .map((root) => root.dataset.slideElementId ?? '')
+            .filter(Boolean);
+
+          const fontFailures = Array.from(
+            document.querySelectorAll<HTMLElement>('[data-slide-element-type="text"]'),
+          )
+            .filter((root) => {
+              const content = root.querySelector<HTMLElement>('.element-content');
+              if (!content) return false;
+              const style = getComputedStyle(content);
+              const sample = (content.textContent ?? '').trim().slice(0, 64);
+              return (
+                !!sample && !document.fonts.check(`${style.fontSize} ${style.fontFamily}`, sample)
+              );
+            })
+            .map((root) => root.dataset.slideElementId ?? '')
+            .filter(Boolean);
+
+          return {
+            outOfBounds,
+            textOverflow,
+            failedImages,
+            failedVideos,
+            renderedMojibake,
+            fontFailures,
+            overlaps,
+          };
         });
 
         for (const id of measurements.outOfBounds) {
@@ -273,6 +333,22 @@ export async function runCoursewareVisualAudit(
         }
         for (const id of measurements.failedImages) {
           addIssue('image_failed', 'critical', `Image failed to render in element ${id}`, [id]);
+        }
+        for (const id of measurements.failedVideos) {
+          addIssue('video_failed', 'critical', `Video failed to load in element ${id}`, [id]);
+        }
+        for (const id of measurements.renderedMojibake) {
+          addIssue(
+            'rendered_mojibake',
+            'critical',
+            `Rendered text contains replacement characters or mojibake in element ${id}`,
+            [id],
+          );
+        }
+        for (const id of measurements.fontFailures) {
+          addIssue('font_failed', 'warning', `Configured font did not load for element ${id}`, [
+            id,
+          ]);
         }
         for (const [leftId, rightId] of measurements.overlaps) {
           addIssue(
@@ -365,6 +441,43 @@ export async function runCoursewareVisualAudit(
     publishable: counts.critical === 0,
     counts,
     slides,
+    issues,
+  };
+}
+
+export function mergeCoursewareVisualAuditReports(
+  base: CoursewareVisualAuditReport,
+  replacement: CoursewareVisualAuditReport,
+  scenes: Scene[],
+): CoursewareVisualAuditReport {
+  const replacementBySceneId = new Map(replacement.slides.map((slide) => [slide.sceneId, slide]));
+  const baseBySceneId = new Map(base.slides.map((slide) => [slide.sceneId, slide]));
+  const slides = scenes
+    .filter((scene) => scene.content.type === 'slide')
+    .map((scene) => replacementBySceneId.get(scene.id) ?? baseBySceneId.get(scene.id))
+    .filter((slide): slide is VisualAuditSlideResult => !!slide);
+  let issueIndex = 0;
+  const normalizedSlides = slides.map((slide) => ({
+    ...slide,
+    issues: slide.issues.map((issue) => {
+      issueIndex += 1;
+      return { ...issue, id: `visual-${String(issueIndex).padStart(4, '0')}` };
+    }),
+  }));
+  const issues = normalizedSlides.flatMap((slide) => slide.issues);
+  const counts = issues.reduce(
+    (result, issue) => {
+      result[issue.severity] += 1;
+      return result;
+    },
+    { critical: 0, warning: 0 },
+  );
+  return {
+    ...base,
+    generatedAt: replacement.generatedAt,
+    publishable: counts.critical === 0,
+    counts,
+    slides: normalizedSlides,
     issues,
   };
 }

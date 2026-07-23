@@ -245,7 +245,7 @@ for ($index = 0; $index -lt $courses.Count; $index += 1) {
     $title = $context
   }
   $model = [string](Get-ConfiguredValue $course $defaults 'model')
-  if ([string]::IsNullOrWhiteSpace($model) -or $model -notmatch '^[^:\s]+:.+$') {
+  if (-not [string]::IsNullOrWhiteSpace($model) -and $model -notmatch '^[^:\s]+:.+$') {
     throw "$context has invalid model '$model' (expected provider:model)."
   }
 
@@ -265,6 +265,14 @@ for ($index = 0; $index -lt $courses.Count; $index += 1) {
   }
   if ($requirementParts.Count -eq 0) {
     throw "$context must define requirement or promptFile."
+  }
+
+  $auditProfile = [string](Get-ConfiguredValue $course $defaults 'auditProfile')
+  if (
+    -not [string]::IsNullOrWhiteSpace($auditProfile) -and
+    $auditProfile -notin @('fast', 'balanced', 'strict')
+  ) {
+    throw "$context has invalid auditProfile '$auditProfile' (expected fast, balanced, or strict)."
   }
 
   $pdfInputs = @()
@@ -316,7 +324,9 @@ for ($index = 0; $index -lt $courses.Count; $index += 1) {
   $body = [ordered]@{
     title = $title
     requirement = $requirementParts -join "`n`n"
-    model = $model
+  }
+  if (-not [string]::IsNullOrWhiteSpace($model)) {
+    $body['model'] = $model
   }
   foreach ($option in @(
       'enableWebSearch',
@@ -332,9 +342,12 @@ for ($index = 0; $index -lt $courses.Count; $index += 1) {
       $body[$option] = $value
     }
   }
+  if (-not [string]::IsNullOrWhiteSpace($auditProfile)) {
+    $body['auditProfile'] = $auditProfile
+  }
   $jobs += [pscustomobject]@{
     Title = $title
-    Model = $model
+    Model = if ([string]::IsNullOrWhiteSpace($model)) { '<server-default>' } else { $model }
     Prompt = $promptPath
     PdfInputs = $pdfInputs
     Body = $body

@@ -1,3 +1,7 @@
+import { SVGPathData } from 'svg-pathdata';
+import type { CoursewareContentPolicy } from '@/lib/courseware-guard/audit-policy';
+import { inspectCoursewareContentIntegrity } from '@/lib/courseware-guard/content-integrity';
+import { sanitizePortableSpeech } from '@/lib/generation/portable-speech';
 import type { Scene, Stage } from '@/lib/types/stage';
 
 export type CoursewareGuardMode = 'inspect' | 'safe-fix';
@@ -13,6 +17,7 @@ export interface CoursewareIssue {
   code: string;
   severity: CoursewareIssueSeverity;
   path: string;
+  message?: string;
   sceneId?: string;
   repairable: boolean;
 }
@@ -43,6 +48,8 @@ export interface CoursewareGuardResult {
 const SCENE_TYPES = new Set(['slide', 'quiz', 'interactive', 'pbl']);
 const OVERLAP_SENSITIVE_ELEMENT_TYPES = new Set(['text', 'table', 'chart', 'latex', 'code']);
 const SIGNIFICANT_OVERLAP_RATIO = 0.15;
+const RECTANGLE_PATH = 'M 0 0 L 1 0 L 1 1 L 0 1 Z';
+const CIRCLE_PATH = 'M 1 0.5 A 0.5 0.5 0 1 1 0 0.5 A 0.5 0.5 0 1 1 1 0.5 Z';
 
 interface ElementGeometry {
   left: number;
@@ -75,7 +82,28 @@ function overlapRatio(left: ElementGeometry, right: ElementGeometry): number {
   const overlapArea = overlapWidth * overlapHeight;
   return overlapArea / Math.min(left.width * left.height, right.width * right.height);
 }
-const MOJIBAKE_PATTERN = /(?:\uFFFD|Ã.|Â.|â€|ðŸ|鈥|锟斤拷)/;
+
+function hasValidSvgPath(value: unknown): value is string {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  try {
+    const pathData = new SVGPathData(value);
+    if (pathData.commands.length < 2) return false;
+    const bounds = pathData.getBounds();
+    return [bounds.minX, bounds.minY, bounds.maxX, bounds.maxY].every(Number.isFinite);
+  } catch {
+    return false;
+  }
+}
+
+function fallbackShapePath(element: Record<string, unknown>): string {
+  const width = Number(element.width);
+  const height = Number(element.height);
+  const isSquare =
+    Number.isFinite(width) &&
+    Number.isFinite(height) &&
+    Math.abs(width - height) <= Math.max(width, height) * 0.05;
+  return element.fixedRatio === true && isSquare ? CIRCLE_PATH : RECTANGLE_PATH;
+}
 
 function cloneBundle(bundle: CoursewareBundle): CoursewareBundle {
   return JSON.parse(JSON.stringify(bundle)) as CoursewareBundle;
@@ -125,11 +153,17 @@ function applySafeFixes(bundle: CoursewareBundle): CoursewareRepair[] {
     repairs.push({ code: 'stage_id_generated', path: 'stage.id' });
   }
   if (typeof stage.name !== 'string' || !stage.name.trim()) {
-    stage.name = 'Untitled course';
+    stage.name = '未命名课程';
     repairs.push({ code: 'stage_name_defaulted', path: 'stage.name' });
   }
 
   const usedSceneIds = new Set<string>();
+  const speechAgents = (stage.generatedAgentConfigs ?? []).map((agent) => ({
+    id: agent.id,
+    name: agent.name,
+    role: agent.role,
+    persona: agent.persona,
+  }));
   let normalizeOrder = false;
   const usedOrders = new Set<number>();
   for (const scene of bundle.scenes) {
@@ -158,7 +192,7 @@ function applySafeFixes(bundle: CoursewareBundle): CoursewareRepair[] {
       });
     }
     if (typeof record.title !== 'string' || !record.title.trim()) {
-      record.title = `Untitled scene ${sceneIndex + 1}`;
+      record.title = `未命名场景 ${sceneIndex + 1}`;
       repairs.push({
         code: 'scene_title_defaulted',
         path: `scenes[${sceneIndex}].title`,
@@ -173,6 +207,31 @@ function applySafeFixes(bundle: CoursewareBundle): CoursewareRepair[] {
         sceneId: nextId,
       });
     }
+
+    const speechIndexes = (record.actions ?? [])
+      .map((action, actionIndex) => (action.type === 'speech' ? actionIndex : -1))
+      .filter((actionIndex) => actionIndex >= 0);
+    const firstSpeechIndex = speechIndexes[0];
+    const lastSpeechIndex = speechIndexes[speechIndexes.length - 1];
+    (record.actions ?? []).forEach((action, actionIndex) => {
+      if (action.type !== 'speech') return;
+      const portableSpeech = sanitizePortableSpeech(action.text, speechAgents, {
+        sceneTitle: record.title,
+        sceneType: record.type,
+        isFirstSpeech: actionIndex === firstSpeechIndex,
+        isLastSpeech: actionIndex === lastSpeechIndex,
+      });
+      if (!portableSpeech.changed) return;
+      action.text = portableSpeech.text;
+      delete action.audioId;
+      delete action.audioUrl;
+      delete (action as typeof action & { audioRef?: string }).audioRef;
+      repairs.push({
+        code: 'speech_portability_repaired',
+        path: `scenes[${sceneIndex}].actions[${actionIndex}].text`,
+        sceneId: nextId,
+      });
+    });
 
     const content = record.content as unknown as Record<string, unknown> | undefined;
     if (content && SCENE_TYPES.has(String(content.type)) && record.type !== content.type) {
@@ -210,6 +269,15 @@ function applySafeFixes(bundle: CoursewareBundle): CoursewareRepair[] {
             repairs.push({
               code: 'slide_element_id_normalized',
               path: `scenes[${sceneIndex}].content.canvas.elements[${elementIndex}].id`,
+              sceneId: nextId,
+            });
+          }
+          if (elementRecord.type === 'shape' && !hasValidSvgPath(elementRecord.path)) {
+            elementRecord.path = fallbackShapePath(elementRecord);
+            elementRecord.viewBox = [1, 1];
+            repairs.push({
+              code: 'slide_shape_path_repaired',
+              path: `scenes[${sceneIndex}].content.canvas.elements[${elementIndex}].path`,
               sceneId: nextId,
             });
           }
@@ -255,7 +323,10 @@ function applySafeFixes(bundle: CoursewareBundle): CoursewareRepair[] {
   return repairs;
 }
 
-function inspectBundle(bundle: CoursewareBundle): CoursewareIssue[] {
+function inspectBundle(
+  bundle: CoursewareBundle,
+  contentPolicy: CoursewareContentPolicy,
+): CoursewareIssue[] {
   const issues: CoursewareIssue[] = [];
   let issueIndex = 0;
   const add = (
@@ -264,6 +335,7 @@ function inspectBundle(bundle: CoursewareBundle): CoursewareIssue[] {
     path: string,
     repairable: boolean,
     sceneId?: string,
+    message?: string,
   ) => {
     issueIndex += 1;
     issues.push({
@@ -273,6 +345,7 @@ function inspectBundle(bundle: CoursewareBundle): CoursewareIssue[] {
       path,
       repairable,
       sceneId,
+      ...(message ? { message } : {}),
     });
   };
 
@@ -318,10 +391,6 @@ function inspectBundle(bundle: CoursewareBundle): CoursewareIssue[] {
         sceneId,
       );
     }
-    if (MOJIBAKE_PATTERN.test(JSON.stringify(content))) {
-      add('content_mojibake_detected', 'critical', `${path}.content`, false, sceneId);
-    }
-
     if (content.type === 'slide') {
       const canvas = content.canvas as Record<string, unknown> | undefined;
       if (!canvas || !Array.isArray(canvas.elements)) {
@@ -355,6 +424,9 @@ function inspectBundle(bundle: CoursewareBundle): CoursewareIssue[] {
         if (!elementId || elementIds.has(elementId))
           add('slide_element_id_invalid', 'warning', `${elementPath}.id`, true, sceneId);
         else elementIds.add(elementId);
+        if (elementRecord.type === 'shape' && !hasValidSvgPath(elementRecord.path)) {
+          add('slide_shape_path_invalid', 'critical', `${elementPath}.path`, true, sceneId);
+        }
         const geometryFields =
           elementRecord.type === 'line'
             ? (['left', 'top', 'width'] as const)
@@ -415,6 +487,19 @@ function inspectBundle(bundle: CoursewareBundle): CoursewareIssue[] {
           );
         });
       });
+      const actions = Array.isArray(record.actions) ? record.actions : [];
+      actions.forEach((action, actionIndex) => {
+        if (!action || typeof action !== 'object') return;
+        const elementId = (action as unknown as Record<string, unknown>).elementId;
+        if (typeof elementId !== 'string' || !elementId || elementIds.has(elementId)) return;
+        add(
+          'slide_action_element_reference_invalid',
+          'critical',
+          `${path}.actions[${actionIndex}].elementId`,
+          false,
+          sceneId,
+        );
+      });
     } else if (content.type === 'quiz') {
       if (!Array.isArray(content.questions) || content.questions.length === 0) {
         add('quiz_questions_missing', 'critical', `${path}.content.questions`, false, sceneId);
@@ -467,6 +552,15 @@ function inspectBundle(bundle: CoursewareBundle): CoursewareIssue[] {
     }
   });
 
+  const agentNames = (bundle.stage.generatedAgentConfigs ?? []).map((agent) => agent.name.trim());
+  for (const finding of inspectCoursewareContentIntegrity(
+    bundle.scenes,
+    contentPolicy,
+    agentNames,
+  )) {
+    add(finding.code, finding.severity, finding.path, false, finding.sceneId, finding.message);
+  }
+
   return issues;
 }
 
@@ -482,13 +576,17 @@ function countIssues(issues: CoursewareIssue[]): Record<CoursewareIssueSeverity,
 
 export function guardCourseware(
   input: CoursewareBundle,
-  options: { mode?: CoursewareGuardMode } = {},
+  options: {
+    mode?: CoursewareGuardMode;
+    contentPolicy?: CoursewareContentPolicy;
+  } = {},
 ): CoursewareGuardResult {
   const mode = options.mode ?? 'inspect';
+  const contentPolicy = options.contentPolicy ?? 'standard';
   const beforeFingerprint = fingerprint(input);
   const bundle = cloneBundle(input);
   const repairs = mode === 'safe-fix' ? applySafeFixes(bundle) : [];
-  const issues = inspectBundle(bundle);
+  const issues = inspectBundle(bundle, contentPolicy);
   const counts = countIssues(issues);
   const afterFingerprint = fingerprint(bundle);
   return {

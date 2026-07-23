@@ -2,7 +2,7 @@
 
 import { useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play } from 'lucide-react';
+import { Play, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SceneRenderer } from '@/components/stage/scene-renderer';
 import { SceneProvider } from '@/lib/contexts/scene-context';
@@ -21,6 +21,7 @@ interface CanvasAreaProps extends CanvasToolbarProps {
   readonly isCourseComplete?: boolean;
   readonly isGenerationFailed?: boolean;
   readonly onRetryGeneration?: () => void;
+  readonly onStopGeneration?: () => void;
 }
 
 export function CanvasArea({
@@ -48,6 +49,7 @@ export function CanvasArea({
   isCourseComplete,
   isGenerationFailed,
   onRetryGeneration,
+  onStopGeneration,
 }: CanvasAreaProps) {
   const { t } = useI18n();
   const showControls = mode === 'playback' && !whiteboardOpen;
@@ -186,6 +188,16 @@ export function CanvasArea({
                     >
                       {t('stage.generatingNextPage')}
                     </motion.span>
+                    {onStopGeneration && (
+                      <button
+                        onClick={onStopGeneration}
+                        className="inline-flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 active:scale-95 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                        title={t('edit.agent.stop')}
+                      >
+                        <Square className="h-3.5 w-3.5 fill-current" />
+                        <span>{t('edit.agent.stop')}</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </motion.div>
