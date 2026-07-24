@@ -17,6 +17,7 @@ import { useCanvasStore } from '@/lib/store/canvas';
 import { migrateScene } from '@/lib/edit/slide-schema';
 import { preparePBLScenesForDocumentPersistence } from '@/lib/pbl/v2/runtime/document-persistence';
 import { hydratePBLScenesFromRuntime } from '@/lib/pbl/v2/runtime/hydration';
+import type { ChatStorageSnapshot } from '@/lib/utils/chat-storage';
 
 const log = createLogger('StageStore');
 
@@ -87,6 +88,7 @@ interface StageState {
 
   // Chats
   chats: ChatSession[];
+  chatSnapshot: ChatStorageSnapshot;
 
   // Mode
   mode: StageMode;
@@ -163,6 +165,7 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
   scenes: [],
   currentSceneId: null,
   chats: [],
+  chatSnapshot: { sessions: [], restoreMarker: null },
   mode: 'playback',
   toolbarState: 'ai',
   generatingOutlines: [],
@@ -181,6 +184,7 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
       scenes: [],
       currentSceneId: null,
       chats: [],
+      chatSnapshot: { sessions: [], restoreMarker: null },
       generationComplete: false,
       generationEpoch: s.generationEpoch + 1,
     }));
@@ -320,50 +324,14 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
 
   setOutlines: (outlines) => {
     set({ outlines });
-    // Persist outlines to IndexedDB. Carry generationComplete so writing
-    // outlines never clobbers a previously-recorded completion flag.
-    const stageId = get().stage?.id;
-    if (stageId) {
-      const generationComplete = get().generationComplete;
-      import('@/lib/utils/database').then(({ db }) => {
-        db.stageOutlines.put({
-          stageId,
-          outlines,
-          generationComplete,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        });
-      });
-    }
+    // The outline is part of the document aggregate; keep one authority.
+    void get().saveToStorage();
   },
 
   setGenerationComplete: (generationComplete) => {
     set({ generationComplete });
-    // Persist alongside the outlines record so resume-on-mount can read it.
-    const stageId = get().stage?.id;
-    if (stageId) {
-      const outlines = get().outlines;
-      // Flush the current scenes BEFORE recording completion, and only record
-      // it once that flush is verified. Scenes save through a 500ms debounce,
-      // so writing the flag eagerly could let a reload see
-      // generationComplete=true with the final slide still unsaved — which
-      // would then be suppressed (not pending) and lost. If the scene flush
-      // fails, skip the flag: the deck stays resumable and recovers on reload.
-      void get()
-        .saveToStorage()
-        .then((saved) => {
-          if (!saved) return;
-          return import('@/lib/utils/database').then(({ db }) => {
-            db.stageOutlines.put({
-              stageId,
-              outlines,
-              generationComplete,
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-            });
-          });
-        });
-    }
+    // Final scenes and the completion barrier commit in the same aggregate write.
+    void get().saveToStorage();
   },
 
   markGenerationCompleteIfDone: () => {
@@ -411,7 +379,8 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
   // durability (e.g. setGenerationComplete) can avoid recording state that
   // outruns the scene data.
   saveToStorage: async () => {
-    const { stage, scenes, currentSceneId, chats } = get();
+    const { stage, scenes, currentSceneId, chats, chatSnapshot, outlines, generationComplete } =
+      get();
     if (!stage?.id) {
       log.warn('Cannot save: stage.id is required');
       return false;
@@ -425,7 +394,26 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
         scenes: persistedScenes,
         currentSceneId,
         chats,
+        chatSnapshot,
+        outline: {
+          outlines,
+          generationComplete,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
       });
+
+      // Bind future saves to the exact chat snapshot this successful write
+      // represented. Keep the restore marker unchanged: a stale no-op after a
+      // restore must remain stale until the editor reloads.
+      if (get().stage?.id === stage.id && get().chats === chats) {
+        set({
+          chatSnapshot: {
+            sessions: structuredClone(chats),
+            restoreMarker: chatSnapshot.restoreMarker,
+          },
+        });
+      }
 
       return true;
     } catch (error) {
@@ -448,9 +436,7 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
       const { loadStageData } = await import('@/lib/utils/stage-storage');
       const data = await loadStageData(stageId);
 
-      // Load outlines for resume-on-refresh
-      const { db } = await import('@/lib/utils/database');
-      const outlinesRecord = await db.stageOutlines.get(stageId);
+      const outlinesRecord = data?.outline;
       const outlines = outlinesRecord?.outlines || [];
       const persistedComplete = outlinesRecord?.generationComplete ?? false;
 
@@ -491,21 +477,12 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
             scenes: migrated,
             failedOutlines,
           });
-        if (generationComplete && !persistedComplete) {
-          db.stageOutlines.put({
-            stageId,
-            outlines,
-            generationComplete: true,
-            createdAt: outlinesRecord?.createdAt ?? Date.now(),
-            updatedAt: Date.now(),
-          });
-        }
-
         set({
           stage: data.stage,
           scenes: migrated,
           currentSceneId: data.currentSceneId,
           chats: data.chats,
+          chatSnapshot: data.chatSnapshot ?? { sessions: [], restoreMarker: undefined },
           outlines,
           generationComplete,
           // Compute generatingOutlines from persisted outlines minus completed
@@ -523,6 +500,7 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
           // this normalises the SPA path to match.
           mode: 'playback',
         });
+        if (generationComplete && !persistedComplete) void get().saveToStorage();
         log.info('Loaded from storage:', stageId);
       } else {
         log.warn('No data found for stage:', stageId);
@@ -540,6 +518,7 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
       scenes: [],
       currentSceneId: null,
       chats: [],
+      chatSnapshot: { sessions: [], restoreMarker: null },
       outlines: [],
       generationComplete: false,
       generationEpoch: s.generationEpoch + 1,

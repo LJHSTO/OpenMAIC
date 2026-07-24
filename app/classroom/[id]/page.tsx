@@ -227,10 +227,7 @@ export default function ClassroomDetailPage() {
               </div>
             </div>
           ) : (
-            <Stage
-              onRetryOutline={retrySingleOutline}
-              onStopGeneration={handleStopGeneration}
-            />
+            <Stage onRetryOutline={retrySingleOutline} onStopGeneration={handleStopGeneration} />
           )}
         </div>
       </MediaStageProvider>

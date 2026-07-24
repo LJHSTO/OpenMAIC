@@ -17,6 +17,14 @@ packages/docs/
 # Build output
 .next/
 out/
+public/vendor/maic-importer/
+
+# Local courseware generation and audit artifacts
+tmp/
+batch/
+output/
+scripts/audit-calculus-quest-courseware.ts
+scripts/check-pdf-parse-limits.ts
 
 # Generated files
 *.min.js

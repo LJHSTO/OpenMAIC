@@ -33,7 +33,9 @@ describe('requirements-to-outlines PBL prompt', () => {
   test('lets explicit interactive coverage override the default interactive budget', () => {
     const text = outlinePromptText();
 
-    expect(text).toMatch(/explicit[\s\S]*interactive[\s\S]*coverage[\s\S]*override[\s\S]*default[\s\S]*budget/i);
+    expect(text).toMatch(
+      /explicit[\s\S]*interactive[\s\S]*coverage[\s\S]*override[\s\S]*default[\s\S]*budget/i,
+    );
     expect(text).toMatch(/honou?r[\s\S]*requested[\s\S]*widget[\s\S]*type/i);
     expect(text).toContain('widgetType');
     expect(text).toContain('widgetOutline');

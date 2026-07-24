@@ -31,6 +31,8 @@ export function CanvasArea({
   mode,
   engineState,
   isLiveSession,
+  isSoftClosing,
+  softCloseDeadline,
   whiteboardOpen,
   sidebarCollapsed,
   chatCollapsed,
@@ -44,6 +46,7 @@ export function CanvasArea({
   onTogglePresentation,
   showStopDiscussion,
   onStopDiscussion,
+  onContinueDiscussion,
   hideToolbar,
   isPendingScene,
   isCourseComplete,
@@ -266,6 +269,8 @@ export function CanvasArea({
           scenesCount={scenesCount}
           engineState={engineState}
           isLiveSession={isLiveSession}
+          isSoftClosing={isSoftClosing}
+          softCloseDeadline={softCloseDeadline}
           whiteboardOpen={whiteboardOpen}
           sidebarCollapsed={sidebarCollapsed}
           chatCollapsed={chatCollapsed}
@@ -279,6 +284,7 @@ export function CanvasArea({
           onTogglePresentation={onTogglePresentation}
           showStopDiscussion={showStopDiscussion}
           onStopDiscussion={onStopDiscussion}
+          onContinueDiscussion={onContinueDiscussion}
         />
       )}
     </div>

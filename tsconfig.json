@@ -37,6 +37,7 @@
     "packages/docs",
     "openclaw",
     "e2e",
-    "tmp"
+    "tmp",
+    "render-service"
   ]
 }

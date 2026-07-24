@@ -114,6 +114,20 @@ export class PlaybackEngine {
     return this.mode;
   }
 
+  /**
+   * Whether the current session interrupted an active lecture.
+   * True while a saved lecture position exists (set by handleUserInterrupt,
+   * cleared by restoreSavedLectureState). Must be read BEFORE cleanup runs.
+   */
+  hasLectureInterruption(): boolean {
+    return this.savedSceneIndex !== null;
+  }
+
+  /** Scene id at the current playback position (post-restore engine state) */
+  getCurrentSceneId(): string | null {
+    return this.scenes[this.sceneIndex]?.id ?? null;
+  }
+
   /** Export a serializable playback snapshot */
   getSnapshot(): PlaybackSnapshot {
     return {
@@ -324,6 +338,17 @@ export class PlaybackEngine {
     this.currentTrigger = null;
   }
 
+  /**
+   * Consume a discussion and immediately publish a progress snapshot.
+   * `onProgress` otherwise fires before a discussion action executes (the id
+   * is not yet consumed) and a discussion is the scene's last action, so
+   * without this emit the consumption fact would never reach persistence.
+   */
+  private markDiscussionConsumed(id: string): void {
+    this.consumedDiscussions.add(id);
+    this.callbacks.onProgress?.(this.getSnapshot());
+  }
+
   /** User clicks "Join" on ProactiveCard → save cursor → live */
   confirmDiscussion(): void {
     if (!this.currentTrigger) {
@@ -333,7 +358,7 @@ export class PlaybackEngine {
     this.invalidatePlaybackGeneration();
 
     // Mark consumed so it won't re-trigger on replay
-    this.consumedDiscussions.add(this.currentTrigger.id);
+    this.markDiscussionConsumed(this.currentTrigger.id);
 
     // Save lecture state — keep actionIndex as-is (past the discussion).
     // Discussions are placed after all speech actions, so the preceding
@@ -358,7 +383,7 @@ export class PlaybackEngine {
   /** User clicks "Skip" on ProactiveCard → consumed → processNext */
   skipDiscussion(): void {
     if (this.currentTrigger) {
-      this.consumedDiscussions.add(this.currentTrigger.id);
+      this.markDiscussionConsumed(this.currentTrigger.id);
       this.currentTrigger = null;
     }
     const generation = this.invalidatePlaybackGeneration();
@@ -378,10 +403,11 @@ export class PlaybackEngine {
     // Close whiteboard if it was open during the discussion
     useCanvasStore.getState().setWhiteboardOpen(false);
 
-    this.callbacks.onDiscussionEnd?.();
-
-    // Restore lecture state
+    // Restore the interrupted lecture cursor before notifying consumers. The
+    // callback may inspect isExhausted() to decide whether playback completed.
     this.restoreSavedLectureState();
+
+    this.callbacks.onDiscussionEnd?.();
 
     this.setMode('idle');
   }
@@ -661,7 +687,7 @@ export class PlaybackEngine {
           this.callbacks.isAgentSelected &&
           !this.callbacks.isAgentSelected(discussionAction.agentId)
         ) {
-          this.consumedDiscussions.add(discussionAction.id);
+          this.markDiscussionConsumed(discussionAction.id);
           this.processNext(generation);
           return;
         }
